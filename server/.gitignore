@@ -1,0 +1,8 @@
+# Ignore environment variables containing API keys
+.env
+
+# Ignore external dependencies
+node_modules/
+
+# Ignore system logs
+*.log
