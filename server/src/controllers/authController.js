@@ -1,7 +1,13 @@
 import { User } from "../models/User.js";
 import bcrypt from "bcryptjs";
-import 'dotenv/config'
-import jwt from 'jsonwebtoken';
+import "dotenv/config";
+import jwt from "jsonwebtoken";
+
+const cookieOptions = {
+  httpOnly: true,
+  sameSite: "lax",
+  secure: process.env.NODE_ENV === "production",
+};
 
 export async function register(req, res) {
   try {
@@ -34,14 +40,12 @@ export async function register(req, res) {
 
     const user = await User.create({ name, email, passwordHash });
 
-    return res
-      .status(201)
-      .json({
-        id: user._id,
-        role: user.role,
-        name: user.name,
-        email: user.email,
-      });
+    return res.status(201).json({
+      id: user._id,
+      role: user.role,
+      name: user.name,
+      email: user.email,
+    });
   } catch (error) {
     if (error.code == 11000) {
       return res.status(409).json({
@@ -57,11 +61,13 @@ export async function login(req, res) {
     const { email, password } = req.body;
 
     if (typeof email !== "string" || typeof password !== "string") {
-      return res.status(400).json({ message: "Please provide email, password in valid format" });
+      return res
+        .status(400)
+        .json({ message: "Please provide email, password in valid format" });
     }
 
     const mail = email.trim().toLowerCase();
-    
+
     const user = await User.findOne({ email: mail }).select("+passwordHash");
 
     if (!user) {
@@ -81,21 +87,19 @@ export async function login(req, res) {
 
     return res
       .cookie("token", token, {
+        ...cookieOptions,
         maxAge: 7 * 24 * 60 * 60 * 1000,
-        httpOnly: true, // Protections against XSS attacks
-        secure: process.env.NODE_ENV === "production",
-        sameSite: "lax"
       })
       .status(200)
-      .json({ message: "Login Successful"});
+      .json({ message: "Login Successful" });
   } catch (err) {
     console.log(err);
     return res.status(500).json({ message: "Server error during login" });
   }
 }
 
-export async function me( req, res) {
-  try{
+export async function me(req, res) {
+  try {
     const user = req.user;
 
     if (!user) {
@@ -105,10 +109,17 @@ export async function me( req, res) {
       id: user.id,
       name: user.name,
       email: user.email,
-      role: user.role
-    })
-  }catch(err){
+      role: user.role,
+    });
+  } catch (err) {
     console.log(err.message);
     res.status(401).json({ message: "Sorry" });
   }
+}
+
+export async function logout(req, res) {
+  res.clearCookie("token", {
+    cookieOptions
+  });
+  return res.status(200).json({ message: "Logged out" });
 }
