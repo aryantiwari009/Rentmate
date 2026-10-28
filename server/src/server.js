@@ -1,11 +1,14 @@
 import express from "express";
 import {connectDB} from "./config/db.js";
 import productRoutes from "./routes/productRoutes.js"
+import authRoutes from './routes/authRoutes.js'
+import cookieParser from "cookie-parser";
 import "dotenv/config";
 
 const app = express();
 
 app.use(express.json());
+app.use(cookieParser());
 
 const port = process.env.PORT || 5000;
 
@@ -26,8 +29,9 @@ async function start() {
   }
 }
 
-// everything in bookRoutes lives under /api/books
+// everything in productRoutes lives under /api/products
 app.use('/api/products', productRoutes);
-app.use('/api/products/:id', productRoutes);
+// everything in authRoutes lives under /api/auth
+app.use("/api/auth", authRoutes);
 
 start();
