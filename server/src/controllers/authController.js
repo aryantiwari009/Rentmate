@@ -36,7 +36,7 @@ export async function register(req, res) {
       return res.status(400).json({ message: "Enter a valid email" });
     }
 
-    const passwordHash = await bycrypt.hash(password, 10);
+    const passwordHash = await bcrypt.hash(password, 10);
 
     const user = await User.create({ name, email, passwordHash });
 
