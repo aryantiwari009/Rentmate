@@ -6,3 +6,5 @@ node_modules/
 
 # Ignore system logs
 *.log
+
+sratch.js
