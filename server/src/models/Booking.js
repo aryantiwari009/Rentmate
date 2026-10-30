@@ -31,6 +31,7 @@ const bookingSchema = new mongoose.Schema(
       enum: ["active", "returned", "cancelled"],
       default: "active",
     },
+    endDate: { type: Date, required: true }
   },
   { timestamps: true }
 );

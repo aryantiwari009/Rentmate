@@ -26,7 +26,9 @@ export async function createBooking(req, res) {
     });
   }
   if (typeof startDate !== "string") {
-    return res.status(400).json({ message: "Not a Valid Date, Format - YYYY-MM-DD" });
+    return res
+      .status(400)
+      .json({ message: "Not a Valid Date, Format - YYYY-MM-DD" });
   }
   const start = new Date(startDate);
   // isNaN(start.getTime()) returns true if the date is INVALID
@@ -38,6 +40,22 @@ export async function createBooking(req, res) {
     return res.status(409).json({ message: "Product not Available" });
   }
 
+  const endDate = new Date(start);
+  endDate.setMonth(endDate.getMonth() + months);
+
+  const clash = await Booking.findOne({
+    product: product._id,
+    status: "active",
+    startDate: { $lt: endDate },
+    endDate: { $gt: start },
+  });
+
+  if (clash) {
+    return res
+      .status(409)
+      .json({ message: "This item is already booked for those dates" });
+  }
+
   const monthlyRent = product.price;
   const deposit = product.deposit;
   const total = monthlyRent * months + deposit;
@@ -47,6 +65,7 @@ export async function createBooking(req, res) {
     product: product._id,
     startDate: start,
     months,
+    endDate,
     monthlyRent,
     deposit,
     total,
