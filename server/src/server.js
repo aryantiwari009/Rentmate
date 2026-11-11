@@ -5,6 +5,7 @@ import authRoutes from './routes/authRoutes.js'
 import cookieParser from "cookie-parser";
 import "dotenv/config";
 import bookingRoutes from './routes/bookingRoutes.js'
+import assistantRoutes from "./routes/assistantRoutes.js";
 
 const app = express();
 
@@ -36,5 +37,7 @@ app.use('/api/products', productRoutes);
 app.use("/api/auth", authRoutes);
 // everything in authRoutes lives under /api/booking
 app.use("/api/bookings", bookingRoutes);
+// everything in authRoutes lives under /api/assistant
+app.use("/api/assistant", assistantRoutes);
 
 start();
