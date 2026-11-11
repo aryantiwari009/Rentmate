@@ -1,8 +1,8 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { ArrowLeft, BadgeCheck, CreditCard, ShieldCheck, Star, Truck } from "lucide-react";
 import { getLocalBookings, getImage, saveLocalBookings } from "../utils/storage.js";
-import { getUser } from "../utils/auth.js";
+import { useAuth } from "../context/AuthContext.jsx";
 import ProductImage from "../components/ProductImage.jsx";
 
 const inr = (n) => `₹${Number(n).toLocaleString("en-IN")}`;
@@ -11,7 +11,16 @@ function Checkout() {
   const location = useLocation();
   const navigate = useNavigate();
   const state = location.state || {};
-  const user = getUser();
+  const { user, loading } = useAuth();
+
+  useEffect(() => {
+    if (!loading && !user) {
+      navigate("/login", {
+        replace: true,
+        state: { from: location.pathname + location.search },
+      });
+    }
+  }, [user, loading, navigate, location]);
 
   const months = Number(state.months || 1);
   const delivery = Number(state.delivery || 0);
@@ -40,6 +49,18 @@ function Checkout() {
 
   const [paying, setPaying] = useState(false);
   const [done, setDone] = useState(false);
+
+  if (loading) {
+    return (
+      <section className="page checkout-page">
+        <div className="container">
+          <div className="empty-page">
+            <p>Loading...</p>
+          </div>
+        </div>
+      </section>
+    );
+  }
 
   const rent = lines.reduce((sum, l) => sum + l.rent, 0);
   const deposit = lines.reduce((sum, l) => sum + l.deposit, 0);

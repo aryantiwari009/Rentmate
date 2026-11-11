@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Link, NavLink, useLocation } from "react-router-dom";
 import { LogOut, Menu, Plus, X } from "lucide-react";
-import { getUser, logoutUser } from "../utils/auth.js";
+import { useAuth } from "../context/AuthContext.jsx";
 import ThemeToggle from "./ThemeToggle.jsx";
 
 const links = [
@@ -15,17 +15,20 @@ const links = [
 function Nav() {
   const location = useLocation();
   const [open, setOpen] = useState(false);
-  const [user, setUser] = useState(getUser());
+  const { user, logout } = useAuth();
 
   useEffect(() => {
     setOpen(false);
-    setUser(getUser());
   }, [location.pathname]);
 
   useEffect(() => {
     document.body.classList.toggle("menu-open", open);
     return () => document.body.classList.remove("menu-open");
   }, [open]);
+
+  const handleLogout = async () => {
+    await logout();
+  };
 
   return (
     <header className="navbar">
@@ -60,17 +63,14 @@ function Nav() {
               <button
                 type="button"
                 className="nav-user"
-                onClick={() => {
-                  logoutUser();
-                  setUser(null);
-                }}
+                onClick={handleLogout}
                 title="Sign out"
                 aria-label={`Sign out ${user.name}`}
               >
                 <span className="avatar" aria-hidden="true">
-                  {user.name.trim().charAt(0).toUpperCase()}
+                  {(user.name || "U").trim().charAt(0).toUpperCase()}
                 </span>
-                <span className="nav-user-name">{user.name.split(" ")[0]}</span>
+                <span className="nav-user-name">{(user.name || "User").split(" ")[0]}</span>
                 <LogOut size={16} aria-hidden="true" />
               </button>
             ) : (

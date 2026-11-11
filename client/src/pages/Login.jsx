@@ -11,17 +11,17 @@ import {
   PackageCheck,
   ShieldCheck,
 } from "lucide-react";
-import { saveUser } from "../utils/auth.js";
+import { useAuth } from "../context/AuthContext.jsx";
 
 export default function Login() {
   const navigate = useNavigate();
   const location = useLocation();
+  const { login, register } = useAuth();
 
   const [mode, setMode] = useState("signin");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [role, setRole] = useState("Renter");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -35,7 +35,7 @@ export default function Login() {
     setPassword("");
   };
 
-  const submit = (e) => {
+  const submit = async (e) => {
     e.preventDefault();
     setError("");
 
@@ -51,72 +51,29 @@ export default function Login() {
       return;
     }
 
-    if (password.length < 6) {
-      setError("Password must contain at least 6 characters.");
+    if (password.length < 8) {
+      setError("Password must contain at least 8 characters.");
+      return;
+    }
+
+    if (isSignup && !name.trim()) {
+      setError("Please enter your full name.");
       return;
     }
 
     setLoading(true);
 
     try {
-      const users = JSON.parse(localStorage.getItem("rentmateUsers") || "[]");
-
       if (isSignup) {
-        if (!name.trim()) {
-          setError("Please enter your full name.");
-          setLoading(false);
-          return;
-        }
-
-        const alreadyExists = users.some(
-          (user) => user.email === normalizedEmail,
-        );
-
-        if (alreadyExists) {
-          setError(
-            "An account with this email already exists. Please sign in.",
-          );
-          setLoading(false);
-          return;
-        }
-
-        const newUser = {
-          id: crypto.randomUUID(),
-          name: name.trim(),
-          email: normalizedEmail,
-          password,
-          role,
-          verified: false,
-          createdAt: new Date().toISOString(),
-        };
-
-        localStorage.setItem(
-          "rentmateUsers",
-          JSON.stringify([...users, newUser]),
-        );
-
-        saveUser(newUser);
-
-        navigate(location.state?.from || "/");
-        return;
+        await register({ name: name.trim(), email: normalizedEmail, password });
+      } else {
+        await login({ email: normalizedEmail, password });
       }
-
-      const existingUser = users.find(
-        (user) => user.email === normalizedEmail && user.password === password,
-      );
-
-      if (!existingUser) {
-        setError("Invalid email or password.");
-        setLoading(false);
-        return;
-      }
-
-      saveUser(existingUser);
 
       navigate(location.state?.from || "/");
     } catch (err) {
-      console.error("Authentication error:", err);
-      setError("Something went wrong. Please try again.");
+      setError(err.message || "Authentication failed. Please try again.");
+    } finally {
       setLoading(false);
     }
   };
@@ -216,7 +173,7 @@ export default function Login() {
                 <input
                   id="password"
                   type={showPassword ? "text" : "password"}
-                  placeholder={isSignup ? "At least 6 characters" : "Enter your password"}
+                  placeholder={isSignup ? "At least 8 characters" : "Enter your password"}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   autoComplete={isSignup ? "new-password" : "current-password"}
@@ -232,30 +189,6 @@ export default function Login() {
                 </button>
               </div>
             </div>
-
-            {isSignup && (
-              <div className="form-group">
-                <span className="label" id="role-label">I want to</span>
-                <div className="segmented" role="group" aria-labelledby="role-label">
-                  <button
-                    type="button"
-                    className={role === "Renter" ? "selected" : ""}
-                    aria-pressed={role === "Renter"}
-                    onClick={() => setRole("Renter")}
-                  >
-                    Rent items
-                  </button>
-                  <button
-                    type="button"
-                    className={role === "Owner" ? "selected" : ""}
-                    aria-pressed={role === "Owner"}
-                    onClick={() => setRole("Owner")}
-                  >
-                    List items
-                  </button>
-                </div>
-              </div>
-            )}
 
             <button
               type="submit"
