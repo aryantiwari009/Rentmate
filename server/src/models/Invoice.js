@@ -25,7 +25,20 @@ const invoiceSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ["DRAFT", "CREATED", "SENT", "PAID", "CANCELLED", "UPDATED", "REFUNDED", "MARKED_AS_PAID"],
+      enum: [
+        "DRAFT",
+        "CREATED",
+        "SENT",
+        "PAID",
+        "CANCELLED",
+        "UPDATED",
+        "REFUNDED",
+        "SCHEDULED",
+        "PAYMENT_FAILED",
+        "REMINDER_SENT",
+        "DELETED",
+        "MARKED_AS_PAID",
+      ],
       default: "CREATED",
     },
     amount: {

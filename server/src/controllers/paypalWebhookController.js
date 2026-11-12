@@ -57,7 +57,7 @@ export async function handlePayPalWebhook(req, res) {
 
   try {
     // ------------------------------------------------------------------------
-    // INVOICE EVENTS: CREATED, SENT, PAID, CANCELLED, UPDATED
+    // INVOICE EVENTS (ALL 9 CONFIGURED TYPES)
     // ------------------------------------------------------------------------
     if (eventType.startsWith("INVOICING.INVOICE.")) {
       const invoiceObj = resource.invoice || resource;
@@ -74,6 +74,21 @@ export async function handlePayPalWebhook(req, res) {
         } else if (eventType === "INVOICING.INVOICE.CANCELLED") {
           invoiceStatus = "CANCELLED";
         } else if (eventType === "INVOICING.INVOICE.UPDATED") {
+          invoiceStatus = "UPDATED";
+        } else if (eventType === "INVOICING.INVOICE.REFUNDED") {
+          invoiceStatus = "REFUNDED";
+        } else if (eventType === "INVOICING.INVOICE.SCHEDULED") {
+          invoiceStatus = "SCHEDULED";
+        } else if (eventType === "INVOICING.INVOICE.PAYMENT_FAILED") {
+          invoiceStatus = "PAYMENT_FAILED";
+        } else if (
+          eventType === "INVOICING.INVOICE.AUTOMATIC-REMINDER-SENT" ||
+          eventType === "INVOICING.INVOICE.AUTOMATIC_REMINDER_SENT"
+        ) {
+          invoiceStatus = "REMINDER_SENT";
+        } else if (eventType === "INVOICING.INVOICE.DELETED") {
+          invoiceStatus = "DELETED";
+        } else {
           invoiceStatus = "UPDATED";
         }
 
@@ -95,6 +110,7 @@ export async function handlePayPalWebhook(req, res) {
               rawDetails: invoiceObj,
               ...(invoiceStatus === "PAID" ? { paidAt: new Date() } : {}),
               ...(invoiceStatus === "CANCELLED" ? { cancelledAt: new Date() } : {}),
+              ...(invoiceStatus === "REFUNDED" ? { refundedAt: new Date() } : {}),
             },
           },
           { new: true, upsert: true }
@@ -111,8 +127,12 @@ export async function handlePayPalWebhook(req, res) {
           if (invoiceStatus === "PAID") {
             booking.paymentStatus = "paid";
             booking.paidAt = booking.paidAt || new Date();
+          } else if (invoiceStatus === "REFUNDED") {
+            booking.paymentStatus = "refunded";
+            booking.refundedAt = booking.refundedAt || new Date();
+          } else if (invoiceStatus === "PAYMENT_FAILED") {
+            booking.paymentStatus = "failed";
           } else if (invoiceStatus === "CANCELLED") {
-            // Keep booking payment status in sync if cancelled before payment
             if (booking.paymentStatus === "pending") {
               booking.paypalInvoiceStatus = "CANCELLED";
             }
