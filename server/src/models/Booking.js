@@ -36,11 +36,13 @@ const bookingSchema = new mongoose.Schema(
     endDate: { type: Date, required: true },
     paymentStatus: {
       type: String,
-      enum: ["pending", "paid", "failed"],
+      enum: ["pending", "paid", "failed", "refunded"],
       default: "pending",
     },
     paypalOrderId: { type: String, trim: true },
+    paypalCaptureId: { type: String, trim: true },
     paidAt: { type: Date },
+    refundedAt: { type: Date },
   },
   { timestamps: true },
 );

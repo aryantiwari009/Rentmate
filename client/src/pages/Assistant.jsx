@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   ArrowRight,
@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { api } from "../utils/api.js";
 import { useAuth } from "../context/AuthContext.jsx";
+import PayButton from "../components/PayButton.jsx";
 
 const inr = (n) => `₹${Number(n || 0).toLocaleString("en-IN")}`;
 
@@ -39,6 +40,24 @@ function Assistant() {
   const [error, setError] = useState(null);
   const [canRetry, setCanRetry] = useState(false);
   const [bookingStates, setBookingStates] = useState({});
+  const latestMessageRef = useRef(null);
+  const thinkingRef = useRef(null);
+
+  useEffect(() => {
+    if (sending) {
+      thinkingRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      return;
+    }
+
+    if (messages.length > 1) {
+      const lastMsg = messages[messages.length - 1];
+      if (lastMsg.role === "assistant") {
+        latestMessageRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      } else {
+        latestMessageRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }
+    }
+  }, [messages, sending]);
 
   async function sendMessage(textToSend) {
     const text = (textToSend || query).trim();
@@ -164,6 +183,7 @@ function Assistant() {
           error: null,
           success: true,
           total: booking.total,
+          booking,
         },
       }));
     } catch (err) {
@@ -212,88 +232,16 @@ function Assistant() {
           </div>
         )}
 
-        <div className="assistant-box">
-          <div className="assistant-input-wrap">
-            <Sparkles size={19} aria-hidden="true" />
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && sendMessage()}
-              placeholder="e.g. I need a study table under ₹700 a month"
-              aria-label="Describe what you need"
-              disabled={sending}
-            />
-            <button
-              type="button"
-              className="btn btn-primary"
-              onClick={() => sendMessage()}
-              disabled={sending || !query.trim()}
-            >
-              {sending ? "Thinking..." : "Send"}
-            </button>
-          </div>
-
-          <div className="suggestion-row">
-            <span>Try:</span>
-            <button
-              type="button"
-              className="chip"
-              onClick={() => setQuery("I need a study table under 700 rupees a month")}
-              disabled={sending}
-            >
-              <GraduationCap size={15} aria-hidden="true" /> Study table under ₹700
-            </button>
-            <button
-              type="button"
-              className="chip"
-              onClick={() => setQuery("I need a temporary room setup under ₹3000/month")}
-              disabled={sending}
-            >
-              <Home size={15} aria-hidden="true" /> Temporary room setup
-            </button>
-            <button
-              type="button"
-              className="chip"
-              onClick={() => setQuery("I need a work from home setup under ₹2500/month")}
-              disabled={sending}
-            >
-              <Briefcase size={15} aria-hidden="true" /> Work from home
-            </button>
-          </div>
-        </div>
-
-        {error && (
-          <div
-            className="alert alert-error"
-            role="alert"
-            style={{
-              marginTop: "var(--s-4)",
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              flexWrap: "wrap",
-              gap: "var(--s-2)",
-            }}
-          >
-            <span>{error}</span>
-            {canRetry && (
-              <button
-                type="button"
-                className="btn btn-secondary btn-sm"
-                onClick={retryLastMessage}
-                style={{ display: "inline-flex", alignItems: "center", gap: "4px" }}
-              >
-                <RotateCcw size={14} aria-hidden="true" /> Retry
-              </button>
-            )}
-          </div>
-        )}
-
         <div className="chat-stream">
-          {messages.map((msg) => {
+          {messages.map((msg, idx) => {
+            const isLatest = idx === messages.length - 1;
             if (msg.role === "user") {
               return (
-                <div className="chat-message-user" key={msg.id}>
+                <div
+                  className="chat-message-user"
+                  key={msg.id}
+                  ref={isLatest ? latestMessageRef : null}
+                >
                   <div className="chat-user-bubble">
                     {msg.content}
                   </div>
@@ -302,7 +250,11 @@ function Assistant() {
             }
 
             return (
-              <div className="ai-answer" key={msg.id}>
+              <div
+                className="ai-answer"
+                key={msg.id}
+                ref={isLatest ? latestMessageRef : null}
+              >
                 <span className="ai-result-icon">
                   <Sparkles size={18} aria-hidden="true" />
                 </span>
@@ -362,19 +314,34 @@ function Assistant() {
                             </p>
 
                             {bState?.success ? (
-                              <div
-                                className="alert alert-success bookingSuccess"
-                                style={{ marginTop: "var(--s-3)" }}
-                              >
-                                <CheckCircle2 size={18} aria-hidden="true" />
-                                <div>
-                                  <strong>Booking confirmed!</strong>
-                                  <p>Total due: {inr(bState.total || proposal.total)}</p>
-                                  <p>Payment is the next step.</p>
+                              <div style={{ marginTop: "var(--s-3)" }}>
+                                <div className="alert alert-success bookingSuccess">
+                                  <CheckCircle2 size={18} aria-hidden="true" />
+                                  <div>
+                                    <strong>Booking confirmed!</strong>
+                                    <p>Total due: {inr(bState.total || proposal.total)}</p>
+                                    <p>Payment is the next step.</p>
+                                  </div>
+                                  <Link to="/rentals" className="success-link">
+                                    View in My Rentals <ArrowRight size={14} aria-hidden="true" />
+                                  </Link>
                                 </div>
-                                <Link to="/rentals" className="success-link">
-                                  View in My Rentals <ArrowRight size={14} aria-hidden="true" />
-                                </Link>
+                                {bState.booking && (
+                                  <div style={{ marginTop: "var(--s-2)" }}>
+                                    <PayButton
+                                      booking={bState.booking}
+                                      onSuccess={(updated) => {
+                                        setBookingStates((prev) => ({
+                                          ...prev,
+                                          [key]: {
+                                            ...prev[key],
+                                            booking: updated,
+                                          },
+                                        }));
+                                      }}
+                                    />
+                                  </div>
+                                )}
                               </div>
                             ) : (
                               <div className="proposal-action">
@@ -409,7 +376,7 @@ function Assistant() {
           })}
 
           {sending && (
-            <div className="ai-answer" style={{ opacity: 0.85 }}>
+            <div className="ai-answer" ref={thinkingRef} style={{ opacity: 0.85 }}>
               <span className="ai-result-icon">
                 <Sparkles size={18} aria-hidden="true" />
               </span>
@@ -419,6 +386,83 @@ function Assistant() {
               </div>
             </div>
           )}
+        </div>
+
+        {error && (
+          <div
+            className="alert alert-error"
+            role="alert"
+            style={{
+              marginBottom: "var(--s-3)",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              flexWrap: "wrap",
+              gap: "var(--s-2)",
+            }}
+          >
+            <span>{error}</span>
+            {canRetry && (
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={retryLastMessage}
+                style={{ display: "inline-flex", alignItems: "center", gap: "4px" }}
+              >
+                <RotateCcw size={14} aria-hidden="true" /> Retry
+              </button>
+            )}
+          </div>
+        )}
+
+        <div className="assistant-box">
+          <div className="assistant-input-wrap">
+            <Sparkles size={19} aria-hidden="true" />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && sendMessage()}
+              placeholder="e.g. I need a study table under ₹700 a month"
+              aria-label="Describe what you need"
+              disabled={sending}
+            />
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => sendMessage()}
+              disabled={sending || !query.trim()}
+            >
+              {sending ? "Thinking..." : "Send"}
+            </button>
+          </div>
+
+          <div className="suggestion-row">
+            <span>Try:</span>
+            <button
+              type="button"
+              className="chip"
+              onClick={() => setQuery("I need a study table under 700 rupees a month")}
+              disabled={sending}
+            >
+              <GraduationCap size={15} aria-hidden="true" /> Study table under ₹700
+            </button>
+            <button
+              type="button"
+              className="chip"
+              onClick={() => setQuery("I need a temporary room setup under ₹3000/month")}
+              disabled={sending}
+            >
+              <Home size={15} aria-hidden="true" /> Temporary room setup
+            </button>
+            <button
+              type="button"
+              className="chip"
+              onClick={() => setQuery("I need a work from home setup under ₹2500/month")}
+              disabled={sending}
+            >
+              <Briefcase size={15} aria-hidden="true" /> Work from home
+            </button>
+          </div>
         </div>
       </div>
     </section>

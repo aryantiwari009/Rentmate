@@ -34,11 +34,16 @@ export async function prepareBooking({ productId, startDate, months }) {
   const endDate = new Date(start);
   endDate.setMonth(endDate.getMonth() + months);
 
+  const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
   const clash = await Booking.findOne({
     product: product._id,
     status: "active",
     startDate: { $lt: endDate },
     endDate: { $gt: start },
+    $or: [
+      { paymentStatus: "paid" },
+      { paymentStatus: "pending", createdAt: { $gte: thirtyMinutesAgo } },
+    ],
   });
   if (clash) return fail(409, "This item is already booked for those dates");
 
