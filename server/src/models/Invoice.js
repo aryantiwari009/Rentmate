@@ -30,9 +30,11 @@ const invoiceSchema = new mongoose.Schema(
         "CREATED",
         "SENT",
         "PAID",
+        "PARTIALLY_PAID",
         "CANCELLED",
         "UPDATED",
         "REFUNDED",
+        "PARTIALLY_REFUNDED",
         "SCHEDULED",
         "PAYMENT_FAILED",
         "REMINDER_SENT",
@@ -72,6 +74,24 @@ const invoiceSchema = new mongoose.Schema(
     cancelledAt: {
       type: Date,
     },
+    refundedAt: {
+      type: Date,
+    },
+    lastEventTimestamp: {
+      type: Date,
+    },
+    lastReminderSentAt: {
+      type: Date,
+    },
+    eventHistory: [
+      {
+        eventType: { type: String, required: true },
+        eventId: { type: String },
+        timestamp: { type: Date, default: Date.now },
+        summary: { type: String },
+        details: { type: mongoose.Schema.Types.Mixed },
+      },
+    ],
     rawDetails: {
       type: mongoose.Schema.Types.Mixed,
     },

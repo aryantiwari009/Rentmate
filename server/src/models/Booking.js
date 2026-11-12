@@ -36,7 +36,7 @@ const bookingSchema = new mongoose.Schema(
     endDate: { type: Date, required: true },
     paymentStatus: {
       type: String,
-      enum: ["pending", "paid", "failed", "refunded"],
+      enum: ["pending", "paid", "failed", "refunded", "partially_paid", "partially_refunded"],
       default: "pending",
     },
     paypalOrderId: { type: String, trim: true },
@@ -46,6 +46,7 @@ const bookingSchema = new mongoose.Schema(
     paypalInvoiceStatus: { type: String, trim: true },
     paidAt: { type: Date },
     refundedAt: { type: Date },
+    lastEventTimestamp: { type: Date },
   },
   { timestamps: true },
 );
