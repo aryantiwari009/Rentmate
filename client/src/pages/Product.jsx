@@ -22,6 +22,7 @@ import {
 import { api } from "../utils/api.js";
 import { useAuth } from "../context/AuthContext.jsx";
 import ProductImage from "../components/ProductImage.jsx";
+import CustomSelect from "../components/CustomSelect.jsx";
 
 function Product() {
   const { id } = useParams();
@@ -334,25 +335,20 @@ function Product() {
                           {value} mo
                         </button>
                       ))}
-                      <select
-                        aria-label="Custom months"
+                    </div>
+                    <div className="custom-duration-row">
+                      <span className="custom-duration-label">Custom duration:</span>
+                      <CustomSelect
+                        ariaLabel="Custom rental duration in months"
                         value={months}
-                        onChange={(e) => setMonths(Number(e.target.value))}
-                        style={{
-                          padding: "6px 8px",
-                          borderRadius: "var(--r-md, 6px)",
-                          border: "1px solid var(--border)",
-                          background: "var(--surface)",
-                          color: "var(--ink)",
-                          fontSize: "0.85rem",
-                        }}
-                      >
-                        {Array.from({ length: 24 }, (_, i) => i + 1).map((m) => (
-                          <option key={m} value={m}>
-                            {m} {m === 1 ? "month" : "months"}
-                          </option>
-                        ))}
-                      </select>
+                        onChange={(val) => setMonths(Number(val))}
+                        size="compact"
+                        className="custom-duration-select"
+                        options={Array.from({ length: 24 }, (_, i) => ({
+                          value: i + 1,
+                          label: `${i + 1} ${i + 1 === 1 ? "month" : "months"}`,
+                        }))}
+                      />
                     </div>
                   </div>
                 </div>

@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { Link } from "react-router-dom";
 import { MapPin, ArrowRight, CheckCircle2, Star } from "lucide-react";
 import ProductImage from "../components/ProductImage.jsx";
+import CustomSelect from "../components/CustomSelect.jsx";
 import { getLocalListings } from "../utils/storage.js";
 
 function ListItem() {
@@ -103,16 +104,18 @@ function ListItem() {
             <div className="form-row">
               <div className="form-group">
                 <label htmlFor="item-category">Category</label>
-                <select
+                <CustomSelect
                   id="item-category"
                   value={form.category}
-                  onChange={(e) => updateField("category", e.target.value)}
-                >
-                  <option>Furniture</option>
-                  <option>Electronics</option>
-                  <option>Home Essentials</option>
-                  <option>Work & Study</option>
-                </select>
+                  onChange={(val) => updateField("category", val)}
+                  ariaLabel="Category"
+                  options={[
+                    "Furniture",
+                    "Electronics",
+                    "Home Essentials",
+                    "Work & Study",
+                  ]}
+                />
               </div>
 
               <div className="form-group">

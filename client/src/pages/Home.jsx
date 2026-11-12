@@ -136,10 +136,8 @@ function Home() {
               </div>
             </Link>
           )}
-        </div>
 
-        <div className="container">
-          <ul className="trust-strip">
+          <ul className="hero-trust-strip">
             <li>
               <ShieldCheck size={18} aria-hidden="true" /> Verified listings
             </li>

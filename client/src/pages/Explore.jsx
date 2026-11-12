@@ -3,6 +3,7 @@ import { useLocation } from "react-router-dom";
 import { Search, X } from "lucide-react";
 import { api } from "../utils/api.js";
 import ProductGrid, { ProductGridSkeleton } from "../components/ProductGrid.jsx";
+import CustomSelect from "../components/CustomSelect.jsx";
 
 const CATEGORIES = ["Furniture", "Electronics", "Home Essentials", "Work & Study"];
 
@@ -123,15 +124,20 @@ function Explore() {
               </span>
             </label>
 
-            <label className="field-inline">
+            <div className="field-inline">
               <span>Sort by</span>
-              <select value={sort} onChange={(e) => setSort(e.target.value)}>
-                <option value="recommended">Recommended</option>
-                <option value="price-asc">Price: low to high</option>
-                <option value="price-desc">Price: high to low</option>
-                <option value="rating">Top rated</option>
-              </select>
-            </label>
+              <CustomSelect
+                value={sort}
+                onChange={setSort}
+                ariaLabel="Sort rentals by"
+                options={[
+                  { value: "recommended", label: "Recommended" },
+                  { value: "price-asc", label: "Price: low to high" },
+                  { value: "price-desc", label: "Price: high to low" },
+                  { value: "rating", label: "Top rated" },
+                ]}
+              />
+            </div>
           </div>
         </div>
 
