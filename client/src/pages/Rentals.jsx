@@ -6,10 +6,13 @@ import {
   Package,
   CalendarClock,
   X,
+  AlertTriangle,
+  CheckCircle2,
 } from "lucide-react";
 import { api } from "../utils/api.js";
 import { useAuth } from "../context/AuthContext.jsx";
 import ProductImage from "../components/ProductImage.jsx";
+import PayButton from "../components/PayButton.jsx";
 
 function Rentals() {
   const navigate = useNavigate();
@@ -17,7 +20,9 @@ function Rentals() {
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [cancellingId, setCancellingId] = useState(null);
+  const [cancelTarget, setCancelTarget] = useState(null);
+  const [cancelling, setCancelling] = useState(false);
+  const [cancelError, setCancelError] = useState(null);
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -46,18 +51,23 @@ function Rentals() {
     }
   }, [user, loadBookings]);
 
-  async function handleCancel(id) {
-    const ok = window.confirm("Are you sure you want to cancel this booking?");
-    if (!ok) return;
+  function promptCancel(booking) {
+    setCancelTarget(booking);
+    setCancelError(null);
+  }
 
-    setCancellingId(id);
+  async function confirmCancel() {
+    if (!cancelTarget || cancelling) return;
+    setCancelling(true);
+    setCancelError(null);
     try {
-      await api.patch(`/bookings/${id}/cancel`);
+      await api.patch(`/bookings/${cancelTarget._id}/cancel`);
+      setCancelTarget(null);
       await loadBookings();
     } catch (err) {
-      alert(err.message || "Failed to cancel booking");
+      setCancelError(err.message || "Failed to cancel booking");
     } finally {
-      setCancellingId(null);
+      setCancelling(false);
     }
   }
 
@@ -188,6 +198,12 @@ function Rentals() {
                     </div>
                   </dl>
 
+                  {booking.status === "active" && booking.paymentStatus === "pending" && (
+                    <div style={{ marginTop: "var(--s-3)", marginBottom: "var(--s-2)" }}>
+                      <PayButton booking={booking} onSuccess={loadBookings} />
+                    </div>
+                  )}
+
                   <div className="rental-footer">
                     <span>
                       <CalendarClock size={14} aria-hidden="true" />{" "}
@@ -200,18 +216,18 @@ function Rentals() {
                       <div className="rental-actions">
                         <button
                           type="button"
-                          onClick={() => handleCancel(booking._id)}
-                          disabled={cancellingId === booking._id}
+                          onClick={() => promptCancel(booking)}
+                          disabled={cancelling && cancelTarget?._id === booking._id}
                           style={{
                             display: "inline-flex",
                             alignItems: "center",
                             gap: "4px",
-                            cursor: cancellingId === booking._id ? "not-allowed" : "pointer",
+                            cursor: "pointer",
                             color: "var(--danger, #dc2626)",
                           }}
                         >
                           <X size={14} aria-hidden="true" />
-                          {cancellingId === booking._id ? "Cancelling..." : "Cancel booking"}
+                          Cancel booking
                         </button>
                       </div>
                     ) : (
@@ -226,6 +242,93 @@ function Rentals() {
           })}
         </div>
       </div>
+
+      {cancelTarget && (
+        <div
+          className="confirm-modal-backdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="cancel-modal-title"
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !cancelling) {
+              setCancelTarget(null);
+              setCancelError(null);
+            }
+          }}
+        >
+          <div className="confirm-modal-dialog">
+            <div className="confirm-modal-header">
+              <div className="confirm-modal-icon" aria-hidden="true">
+                <AlertTriangle size={24} />
+              </div>
+              <h2 id="cancel-modal-title" className="confirm-modal-title">
+                Cancel booking?
+              </h2>
+            </div>
+
+            <p className="confirm-modal-body">
+              Are you sure you want to cancel your rental for{" "}
+              <strong>{cancelTarget.product?.name || "this item"}</strong>?
+              Your reserved dates will be freed for other users.
+            </p>
+
+            {cancelTarget.paymentStatus === "paid" ? (
+              <div className="confirm-modal-refund-notice">
+                <CheckCircle2 size={18} aria-hidden="true" style={{ flexShrink: 0 }} />
+                <span>
+                  A full automatic refund of <strong>{money(cancelTarget.total)}</strong> will be credited directly to your original payment method.
+                </span>
+              </div>
+            ) : null}
+
+            {cancelError && (
+              <div
+                className="form-error"
+                style={{
+                  padding: "var(--s-3)",
+                  borderRadius: "var(--r-2)",
+                  background: "var(--danger-tint)",
+                  color: "var(--danger)",
+                  fontSize: "0.875rem",
+                }}
+              >
+                {cancelError}
+              </div>
+            )}
+
+            <div className="confirm-modal-actions">
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={() => {
+                  setCancelTarget(null);
+                  setCancelError(null);
+                }}
+                disabled={cancelling}
+              >
+                Keep booking
+              </button>
+              <button
+                type="button"
+                className="btn btn-sm"
+                style={{
+                  background: "var(--danger)",
+                  color: "#ffffff",
+                  borderColor: "var(--danger)",
+                }}
+                onClick={confirmCancel}
+                disabled={cancelling}
+              >
+                {cancelling
+                  ? "Cancelling..."
+                  : cancelTarget.paymentStatus === "paid"
+                  ? "Cancel & Refund"
+                  : "Confirm cancellation"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 }

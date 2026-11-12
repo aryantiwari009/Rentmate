@@ -3,6 +3,7 @@ import { Product } from "../models/Product.js";
 import { Booking } from "../models/Booking.js";
 
 import { prepareBooking } from "../services/bookingService.js";
+import { refundCapture, getOrder } from "../services/paypal.js";
 
 export async function createBooking(req, res) {
   const { productId, startDate, months } = req.body;
@@ -46,7 +47,32 @@ export async function cancelBooking(req, res) {
       .status(409)
       .json({ message: "Only active bookings can be cancelled" });
   }
+
+  let refundIssued = false;
+  if (booking.paymentStatus === "paid") {
+    try {
+      let captureId = booking.paypalCaptureId;
+      if (!captureId && booking.paypalOrderId) {
+        const orderData = await getOrder(booking.paypalOrderId);
+        captureId = orderData?.purchase_units?.[0]?.payments?.captures?.[0]?.id;
+      }
+
+      if (captureId) {
+        await refundCapture(captureId, `Refund for cancelled RentMate booking #${booking._id}`);
+        booking.paypalCaptureId = captureId;
+        booking.paymentStatus = "refunded";
+        booking.refundedAt = new Date();
+        refundIssued = true;
+      }
+    } catch (err) {
+      console.error(`Refund failed for booking ${booking._id}: ${err.message}`);
+      return res.status(502).json({
+        message: `Failed to process refund: ${err.message}. Booking was not cancelled.`,
+      });
+    }
+  }
+
   booking.status = "cancelled";
   await booking.save();
-  return res.json(booking);
+  return res.json({ ...booking.toObject(), refundIssued });
 }

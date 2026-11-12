@@ -59,3 +59,25 @@ OPENAI_MODEL=gpt-4o-mini
 ```
 
 The app falls back to demo data if MongoDB is not connected, so you can start designing and demoing immediately.
+
+## Payments (PayPal Sandbox)
+
+RentMate supports booking payments via the PayPal JavaScript SDK and Orders v2 API in the sandbox environment.
+
+### Environment variables
+Add the following to `server/.env`:
+```env
+PAYPAL_CLIENT_ID=your-sandbox-client-id
+PAYPAL_CLIENT_SECRET=your-sandbox-secret
+PAYPAL_API=https://api-m.sandbox.paypal.com
+PAYPAL_CURRENCY=USD
+INR_PER_USD=85
+```
+- `INR_PER_USD`: Fixed conversion rate (e.g. 85) used as a demo rate to convert INR rental totals into USD for PayPal Sandbox checkout. The charged amount is always computed on the server from `booking.total / INR_PER_USD`.
+
+### Automatic Refunds
+- Cancelling a paid booking automatically triggers a full refund of the captured funds through the PayPal Payments v2 Captures Refund API (`POST /v2/payments/captures/{capture_id}/refund`).
+- The booking payment status is automatically updated to `refunded`, and the reserved dates are freed up for future bookings.
+
+### Known limitations
+- **No webhooks:** Payment status updates and captures are confirmed synchronously via the PayPal Orders v2 and Payments v2 endpoints.
