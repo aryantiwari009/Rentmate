@@ -7,6 +7,7 @@ import {
   capture,
   createInvoiceEndpoint,
   getInvoiceEndpoint,
+  handleWebhook,
 } from "../controllers/paymentController.js";
 import { handlePayPalWebhook } from "../controllers/paypalWebhookController.js";
 
@@ -23,7 +24,8 @@ const router = Router();
 router.use(paymentLimiter);
 
 // PayPal Webhooks (called asynchronously by PayPal servers)
-router.post("/webhook", handleWebhook);
+// Both POST /api/payments/webhook and POST /api/paypal/webhook are supported
+router.post("/webhook", handlePayPalWebhook);
 
 // Protected client endpoints
 router.get("/config", requireAuth, getConfig);
