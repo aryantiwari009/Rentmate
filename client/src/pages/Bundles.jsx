@@ -1,8 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { AlertCircle, ArrowRight, Check, Package, Sparkles } from "lucide-react";
-import { API } from "../utils/config.js";
-import fallbackProducts from "../data/fallbackProducts.js";
+import { api } from "../utils/api.js";
 import { getLocalListings } from "../utils/storage.js";
 import { rentalBundles, matchSlot } from "../data/bundles.js";
 import BundleIcon from "../components/BundleIcon.jsx";
@@ -20,14 +19,13 @@ function Bundles() {
   useEffect(() => {
     async function load() {
       try {
-        const response = await fetch(`${API}/products`);
-        const data = response.ok ? await response.json() : [];
+        const data = await api.get("/products");
         setProducts([
-          ...(Array.isArray(data) && data.length ? data : fallbackProducts),
+          ...(Array.isArray(data) ? data : []),
           ...getLocalListings(),
         ]);
       } catch {
-        setProducts([...fallbackProducts, ...getLocalListings()]);
+        setProducts(getLocalListings());
       } finally {
         setLoading(false);
       }

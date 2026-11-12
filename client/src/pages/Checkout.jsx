@@ -1,8 +1,8 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { ArrowLeft, BadgeCheck, CreditCard, ShieldCheck, Star, Truck } from "lucide-react";
-import { getLocalBookings, getImage, saveLocalBookings } from "../utils/storage.js";
 import { useAuth } from "../context/AuthContext.jsx";
+import { api } from "../utils/api.js";
 import ProductImage from "../components/ProductImage.jsx";
 
 const inr = (n) => `₹${Number(n).toLocaleString("en-IN")}`;
@@ -49,6 +49,7 @@ function Checkout() {
 
   const [paying, setPaying] = useState(false);
   const [done, setDone] = useState(false);
+  const [error, setError] = useState("");
 
   if (loading) {
     return (
@@ -83,30 +84,28 @@ function Checkout() {
 
   const title = isBundle ? state.bundle?.name || "Rental bundle" : lines[0].product.name;
 
-  function confirm() {
+  async function confirm() {
     setPaying(true);
-    setTimeout(() => {
-      const stamp = Date.now();
-      const bookings = lines.map((line, index) => ({
-        ...line.product,
-        productId: line.product._id || line.product.id,
-        productName: line.product.name,
-        monthlyRent: line.rent,
-        months,
-        deposit: line.deposit,
-        total: line.rent * months + line.deposit + (index === 0 ? delivery : 0),
-        startDate: state.startDate,
-        status: "Active",
-        image: getImage(line.product),
-        ownerVerified: true,
-        deliveryDate: state.deliveryDate,
-        bundleName: isBundle ? title : undefined,
-        _id: `booking-${stamp}-${index}`,
-      }));
-      saveLocalBookings([...bookings, ...getLocalBookings()]);
-      setPaying(false);
+    setError("");
+    try {
+      const dateStr = state.startDate
+        ? new Date(state.startDate).toISOString().slice(0, 10)
+        : new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+
+      for (const line of lines) {
+        const prodId = line.product._id || line.product.id;
+        await api.post("/bookings", {
+          productId: prodId,
+          startDate: dateStr,
+          months,
+        });
+      }
       setDone(true);
-    }, 700);
+    } catch (err) {
+      setError(err.message || "Failed to confirm booking");
+    } finally {
+      setPaying(false);
+    }
   }
 
   return (
@@ -226,6 +225,12 @@ function Checkout() {
               >
                 {paying ? "Confirming..." : `Confirm ${isBundle ? "bundle" : "rental"} · ${inr(total)}`}
               </button>
+
+              {error && (
+                <p className="alert alert-error" role="alert" style={{ marginTop: "var(--s-3)" }}>
+                  {error}
+                </p>
+              )}
 
               <div className="checkout-protection">
                 <ShieldCheck size={18} aria-hidden="true" />

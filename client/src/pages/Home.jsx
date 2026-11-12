@@ -17,11 +17,9 @@ import {
   Tv,
   Users,
 } from "lucide-react";
-import { getLocalListings } from "../utils/storage.js";
 import ProductImage from "../components/ProductImage.jsx";
-import fallbackProducts from "../data/fallbackProducts.js";
 import { rentalBundles } from "../data/bundles.js";
-import { API } from "../utils/config.js";
+import { api } from "../utils/api.js";
 import ProductGrid, { ProductGridSkeleton } from "../components/ProductGrid.jsx";
 import BundleIcon from "../components/BundleIcon.jsx";
 
@@ -48,33 +46,26 @@ const benefits = [
 
 function Home() {
   const navigate = useNavigate();
-  const [products, setProducts] = useState(fallbackProducts);
+  const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [search, setSearch] = useState("");
 
-  useEffect(() => {
-    async function loadProducts() {
-      try {
-        const response = await fetch(`${API}/products`);
-
-        if (!response.ok) {
-          throw new Error("Products API failed");
-        }
-
-        const data = await response.json();
-
-        if (Array.isArray(data) && data.length > 0) {
-          setProducts([...data, ...getLocalListings()]);
-        } else {
-          setProducts([...fallbackProducts, ...getLocalListings()]);
-        }
-      } catch {
-        setProducts([...fallbackProducts, ...getLocalListings()]);
-      } finally {
-        setLoading(false);
-      }
+  const loadProducts = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await api.get("/products");
+      setProducts(Array.isArray(data) ? data : []);
+    } catch (err) {
+      setError(err.message || "Failed to load rentals");
+      setProducts([]);
+    } finally {
+      setLoading(false);
     }
+  };
 
+  useEffect(() => {
     loadProducts();
   }, []);
 
@@ -205,6 +196,14 @@ function Home() {
 
           {loading ? (
             <ProductGridSkeleton count={4} />
+          ) : error ? (
+            <div className="empty-state">
+              <h3>Failed to load rentals</h3>
+              <p>{error}</p>
+              <button type="button" className="btn btn-primary" onClick={loadProducts}>
+                Retry
+              </button>
+            </div>
           ) : (
             <ProductGrid products={products.slice(0, 4)} />
           )}

@@ -1,71 +1,182 @@
-import React, { useMemo, useState } from "react";
+import React, { useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowRight, Briefcase, Calculator, GraduationCap, Home, Sparkles, WalletCards } from "lucide-react";
-import { getLocalListings } from "../utils/storage.js";
-import fallbackProducts from "../data/fallbackProducts.js";
-import { API } from "../utils/config.js";
-import ProductGrid from "../components/ProductGrid.jsx";
-import { rentalBundles } from "../data/bundles.js";
-import BundleIcon from "../components/BundleIcon.jsx";
+import {
+  ArrowRight,
+  Briefcase,
+  CheckCircle2,
+  GraduationCap,
+  Home,
+  PackageCheck,
+  RotateCcw,
+  Sparkles,
+} from "lucide-react";
+import { api } from "../utils/api.js";
+import { useAuth } from "../context/AuthContext.jsx";
 
-function extractBudget(text) {
-  const match = text.match(/(?:₹|rs\.?|inr)?\s*(\d{3,6})(?:\s*\/\s*month|\s*per\s*month|\s*monthly)?/i);
-  return match ? Number(match[1]) : null;
-}
+const inr = (n) => `₹${Number(n || 0).toLocaleString("en-IN")}`;
+
+const formatProposalDate = (dateStr) =>
+  new Date(dateStr).toLocaleDateString("en-IN", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC",
+  });
 
 function Assistant() {
+  const { user } = useAuth();
   const [query, setQuery] = useState("");
-  const [answer, setAnswer] = useState("");
-  const [recommendations, setRecommendations] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [budget, setBudget] = useState(null);
-  const [bundle, setBundle] = useState(null);
+  const [messages, setMessages] = useState([
+    {
+      id: "initial",
+      role: "assistant",
+      content:
+        "Hello! I am your RentMate assistant. Tell me what you need, your budget, and when you would like to start renting. I can find products and prepare bookings for you.",
+      proposals: [],
+    },
+  ]);
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState(null);
+  const [canRetry, setCanRetry] = useState(false);
+  const [bookingStates, setBookingStates] = useState({});
 
-  const catalog = useMemo(() => [...fallbackProducts, ...getLocalListings()], []);
+  async function sendMessage(textToSend) {
+    const text = (textToSend || query).trim();
+    if (!text || sending) return;
 
-  async function getRecommendations() {
-    if (!query.trim()) return;
-    setLoading(true); setAnswer(""); setRecommendations([]); setBundle(null);
-    const parsedBudget = extractBudget(query);
-    setBudget(parsedBudget);
+    if (!user) {
+      setError("Please sign in to chat with the assistant.");
+      return;
+    }
+
+    const userMessage = {
+      id: `u-${Date.now()}`,
+      role: "user",
+      content: text,
+    };
+
+    const nextMessages = [...messages, userMessage];
+    setMessages(nextMessages);
+    setQuery("");
+    setError(null);
+    setCanRetry(false);
+    setSending(true);
+
+    const payload = nextMessages
+      .filter((m) => m.role === "user" || m.role === "assistant")
+      .slice(-10)
+      .map((m) => ({
+        role: m.role,
+        content: m.content.slice(0, 500).trim(),
+      }));
 
     try {
-      const response = await fetch(`${API}/ai/recommend`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ request: query, query }),
-      });
-      if (!response.ok) throw new Error("AI unavailable");
-      const data = await response.json();
-      setAnswer(data.answer || data.message || "Here is a setup based on your requirement.");
-      const ids = new Set((data.recommendations || []).map((item) => String(item._id || item.id)));
-      const serverMatches = (data.recommendations || []).map((item) => catalog.find((p) => String(p._id || p.id) === String(item._id || item.id)) || item);
-      setRecommendations(serverMatches.length ? serverMatches : catalog.filter((p) => !parsedBudget || p.price <= parsedBudget).slice(0, 4));
-      if (data.bundle) setBundle(data.bundle);
-      else if (ids.size === 0) setBundle(pickBundle(query));
-    } catch {
-      const text = query.toLowerCase();
-      let matches = catalog;
-      if (text.includes("bed") || text.includes("sleep") || text.includes("room")) matches = catalog.filter((item) => ["Furniture","Home Essentials"].includes(item.category));
-      else if (text.includes("tv") || text.includes("monitor") || text.includes("electronics")) matches = catalog.filter((item) => item.category === "Electronics");
-      else if (text.includes("work") || text.includes("study") || text.includes("office")) matches = catalog.filter((item) => item.category === "Work & Study");
-      if (parsedBudget) matches = matches.filter((item) => Number(item.price) <= parsedBudget);
-      matches = matches.slice(0, 4);
-      setRecommendations(matches);
-      setBundle(pickBundle(query));
-      const total = matches.reduce((sum, item) => sum + Number(item.price || 0), 0);
-      setAnswer(parsedBudget && total > parsedBudget ? `I found a setup, but the first ${matches.length} items total ₹${total}/month, which is above your ₹${parsedBudget} budget. Try the bundle options below or increase the budget.` : `Based on your requirement, I found ${matches.length} rental options${parsedBudget ? ` within ₹${parsedBudget}/month` : ""}.`);
+      const response = await api.post("/assistant/chat", { messages: payload });
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `a-${Date.now()}`,
+          role: "assistant",
+          content: response.reply || "",
+          proposals: Array.isArray(response.proposals) ? response.proposals : [],
+        },
+      ]);
+    } catch (err) {
+      let errorMsg = err.message || "Something went wrong";
+      if (err.status === 401) {
+        errorMsg = "Please sign in to chat with the assistant.";
+      } else if (err.status === 429 || errorMsg.includes("Too many requests")) {
+        errorMsg = "You are sending messages too quickly, please wait a minute";
+      } else if (err.status === 503 || err.status === 500) {
+        errorMsg = "The assistant is unavailable right now. Please try again in a minute.";
+      }
+      setError(errorMsg);
+      setCanRetry(true);
+    } finally {
+      setSending(false);
     }
-    setLoading(false);
   }
 
-  function pickBundle(text) {
-    const value = text.toLowerCase();
-    if (value.includes("student") || value.includes("study") || value.includes("college")) return rentalBundles[0];
-    if (value.includes("work") || value.includes("office") || value.includes("coding")) return rentalBundles[1];
-    return rentalBundles[2];
+  function retryLastMessage() {
+    const lastUserMessage = [...messages].reverse().find((m) => m.role === "user");
+    if (lastUserMessage) {
+      // Re-trigger sending with the existing message list
+      const payload = messages
+        .filter((m) => m.role === "user" || m.role === "assistant")
+        .slice(-10)
+        .map((m) => ({
+          role: m.role,
+          content: m.content.slice(0, 500).trim(),
+        }));
+
+      setSending(true);
+      setError(null);
+      setCanRetry(false);
+
+      api.post("/assistant/chat", { messages: payload })
+        .then((response) => {
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: `a-${Date.now()}`,
+              role: "assistant",
+              content: response.reply || "",
+              proposals: Array.isArray(response.proposals) ? response.proposals : [],
+            },
+          ]);
+        })
+        .catch((err) => {
+          let errorMsg = err.message || "Something went wrong";
+          if (err.status === 401) {
+            errorMsg = "Please sign in to chat with the assistant.";
+          } else if (err.status === 429 || errorMsg.includes("Too many requests")) {
+            errorMsg = "You are sending messages too quickly, please wait a minute";
+          } else if (err.status === 503 || err.status === 500) {
+            errorMsg = "The assistant is unavailable right now. Please try again in a minute.";
+          }
+          setError(errorMsg);
+          setCanRetry(true);
+        })
+        .finally(() => {
+          setSending(false);
+        });
+    }
   }
 
-  const recommendedTotal = recommendations.reduce((sum, item) => sum + Number(item.price || 0), 0);
+  async function handleConfirmBooking(proposal) {
+    const key = `${proposal.productId}-${proposal.startDate}-${proposal.months}`;
+    setBookingStates((prev) => ({
+      ...prev,
+      [key]: { loading: true, error: null, success: false },
+    }));
+
+    try {
+      const booking = await api.post("/bookings", {
+        productId: proposal.productId,
+        startDate: proposal.startDate,
+        months: proposal.months,
+      });
+
+      setBookingStates((prev) => ({
+        ...prev,
+        [key]: {
+          loading: false,
+          error: null,
+          success: true,
+          total: booking.total,
+        },
+      }));
+    } catch (err) {
+      setBookingStates((prev) => ({
+        ...prev,
+        [key]: {
+          loading: false,
+          error: err.message || "Failed to confirm booking",
+          success: false,
+        },
+      }));
+    }
+  }
 
   return (
     <section className="page assistant-page">
@@ -76,10 +187,30 @@ function Assistant() {
           </span>
           <h1>Your rental assistant</h1>
           <p>
-            Tell me what you need, your budget and how long you need it. I will suggest a
-            practical starting setup.
+            Tell me what you need, your budget and dates. I will find the right items
+            and check availability directly from our live catalog.
           </p>
         </header>
+
+        {!user && (
+          <div
+            className="alert alert-info"
+            role="status"
+            style={{
+              marginBottom: "var(--s-4)",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              flexWrap: "wrap",
+              gap: "var(--s-2)",
+            }}
+          >
+            <span>Please sign in to chat with the rental assistant.</span>
+            <Link to="/login" state={{ from: "/assistant" }} className="btn btn-primary btn-sm">
+              Sign in
+            </Link>
+          </div>
+        )}
 
         <div className="assistant-box">
           <div className="assistant-input-wrap">
@@ -87,94 +218,211 @@ function Assistant() {
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && getRecommendations()}
-              placeholder="e.g. I am a student moving for 6 months, budget ₹3000/month"
+              onKeyDown={(e) => e.key === "Enter" && sendMessage()}
+              placeholder="e.g. I need a study table under ₹700 a month"
               aria-label="Describe what you need"
+              disabled={sending}
             />
             <button
               type="button"
               className="btn btn-primary"
-              onClick={getRecommendations}
-              disabled={loading || !query.trim()}
+              onClick={() => sendMessage()}
+              disabled={sending || !query.trim()}
             >
-              {loading ? "Thinking..." : "Recommend"}
+              {sending ? "Thinking..." : "Send"}
             </button>
           </div>
 
           <div className="suggestion-row">
             <span>Try:</span>
-            <button type="button" className="chip" onClick={() => setQuery("I'm a student and need a study setup under ₹2000/month")}>
-              <GraduationCap size={15} aria-hidden="true" /> Study setup
+            <button
+              type="button"
+              className="chip"
+              onClick={() => setQuery("I need a study table under 700 rupees a month")}
+              disabled={sending}
+            >
+              <GraduationCap size={15} aria-hidden="true" /> Study table under ₹700
             </button>
-            <button type="button" className="chip" onClick={() => setQuery("I need a temporary room setup under ₹3000/month")}>
-              <Home size={15} aria-hidden="true" /> Temporary room
+            <button
+              type="button"
+              className="chip"
+              onClick={() => setQuery("I need a temporary room setup under ₹3000/month")}
+              disabled={sending}
+            >
+              <Home size={15} aria-hidden="true" /> Temporary room setup
             </button>
-            <button type="button" className="chip" onClick={() => setQuery("I need a work from home setup under ₹2500/month")}>
+            <button
+              type="button"
+              className="chip"
+              onClick={() => setQuery("I need a work from home setup under ₹2500/month")}
+              disabled={sending}
+            >
               <Briefcase size={15} aria-hidden="true" /> Work from home
             </button>
           </div>
         </div>
 
-        {loading && (
-          <div className="page-loading" role="status">
-            <div className="loader" />
-            <p>Finding the best matches...</p>
+        {error && (
+          <div
+            className="alert alert-error"
+            role="alert"
+            style={{
+              marginTop: "var(--s-4)",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              flexWrap: "wrap",
+              gap: "var(--s-2)",
+            }}
+          >
+            <span>{error}</span>
+            {canRetry && (
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={retryLastMessage}
+                style={{ display: "inline-flex", alignItems: "center", gap: "4px" }}
+              >
+                <RotateCcw size={14} aria-hidden="true" /> Retry
+              </button>
+            )}
           </div>
         )}
 
-        {answer && (
-          <div className="ai-result">
-            <div className="ai-answer">
+        <div className="chat-stream">
+          {messages.map((msg) => {
+            if (msg.role === "user") {
+              return (
+                <div className="chat-message-user" key={msg.id}>
+                  <div className="chat-user-bubble">
+                    {msg.content}
+                  </div>
+                </div>
+              );
+            }
+
+            return (
+              <div className="ai-answer" key={msg.id}>
+                <span className="ai-result-icon">
+                  <Sparkles size={18} aria-hidden="true" />
+                </span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <span>RentMate AI</span>
+                  <p style={{ whiteSpace: "pre-wrap", margin: "var(--s-1) 0" }}>
+                    {msg.content}
+                  </p>
+
+                  {Array.isArray(msg.proposals) && msg.proposals.length > 0 && (
+                    <div className="proposal-list">
+                      {msg.proposals.map((proposal) => {
+                        const key = `${proposal.productId}-${proposal.startDate}-${proposal.months}`;
+                        const bState = bookingStates[key];
+
+                        return (
+                          <div className="proposal-card" key={key}>
+                            <div className="proposal-header">
+                              <div className="proposal-title">
+                                <PackageCheck size={18} aria-hidden="true" />
+                                <h4>{proposal.productName}</h4>
+                              </div>
+                              <span className="proposal-badge">
+                                {proposal.months} mo rental
+                              </span>
+                            </div>
+
+                            <dl className="proposal-details">
+                              <div>
+                                <dt>Start date</dt>
+                                <dd>{formatProposalDate(proposal.startDate)}</dd>
+                              </div>
+                              <div>
+                                <dt>End date</dt>
+                                <dd>{formatProposalDate(proposal.endDate)}</dd>
+                              </div>
+                              <div>
+                                <dt>Duration</dt>
+                                <dd>{proposal.months} month{proposal.months > 1 ? "s" : ""}</dd>
+                              </div>
+                              <div>
+                                <dt>Monthly rent</dt>
+                                <dd>{inr(proposal.monthlyRent)}/mo</dd>
+                              </div>
+                              <div>
+                                <dt>Security deposit</dt>
+                                <dd>{inr(proposal.deposit)}</dd>
+                              </div>
+                              <div className="proposal-total">
+                                <dt>Total</dt>
+                                <dd>{inr(proposal.total)}</dd>
+                              </div>
+                            </dl>
+
+                            <p className="proposal-note">
+                              Prices are confirmed by the server before you pay.
+                            </p>
+
+                            {bState?.success ? (
+                              <div
+                                className="alert alert-success bookingSuccess"
+                                style={{ marginTop: "var(--s-3)" }}
+                              >
+                                <CheckCircle2 size={18} aria-hidden="true" />
+                                <div>
+                                  <strong>Booking confirmed!</strong>
+                                  <p>Total due: {inr(bState.total || proposal.total)}</p>
+                                  <p>Payment is the next step.</p>
+                                </div>
+                                <Link to="/rentals" className="success-link">
+                                  View in My Rentals <ArrowRight size={14} aria-hidden="true" />
+                                </Link>
+                              </div>
+                            ) : (
+                              <div className="proposal-action">
+                                <button
+                                  type="button"
+                                  className="btn btn-primary btn-sm"
+                                  onClick={() => handleConfirmBooking(proposal)}
+                                  disabled={bState?.loading}
+                                >
+                                  {bState?.loading ? "Confirming..." : "Confirm booking"}
+                                </button>
+                              </div>
+                            )}
+
+                            {bState?.error && (
+                              <p
+                                className="alert alert-error"
+                                role="alert"
+                                style={{ marginTop: "var(--s-2)" }}
+                              >
+                                {bState.error}
+                              </p>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+
+          {sending && (
+            <div className="ai-answer" style={{ opacity: 0.85 }}>
               <span className="ai-result-icon">
                 <Sparkles size={18} aria-hidden="true" />
               </span>
               <div>
                 <span>RentMate AI</span>
-                <p>{answer}</p>
+                <p>RentMate AI is thinking...</p>
               </div>
             </div>
-
-            <div className="ai-metrics">
-              <div>
-                <WalletCards size={18} aria-hidden="true" />
-                <span>Budget</span>
-                <b>{budget ? `₹${budget}/mo` : "Flexible"}</b>
-              </div>
-              <div>
-                <Calculator size={18} aria-hidden="true" />
-                <span>Suggested total</span>
-                <b>₹{recommendedTotal.toLocaleString("en-IN")}/mo</b>
-              </div>
-            </div>
-
-            {bundle && (
-              <div className="ai-bundle">
-                <span className="category-icon">
-                  <BundleIcon id={bundle.id} />
-                </span>
-                <div>
-                  <h2>{bundle.name}</h2>
-                  <p>{bundle.description}</p>
-                </div>
-                <Link to="/bundles" className="btn btn-secondary">
-                  View bundle <ArrowRight size={17} aria-hidden="true" />
-                </Link>
-              </div>
-            )}
-
-            {recommendations.length > 0 && (
-              <div>
-                <div className="section-heading">
-                  <h2>Recommended for you</h2>
-                  <span className="muted-copy">{recommendations.length} items</span>
-                </div>
-                <ProductGrid products={recommendations} />
-              </div>
-            )}
-          </div>
-        )}
+          )}
+        </div>
       </div>
     </section>
   );
 }
+
 export default Assistant;

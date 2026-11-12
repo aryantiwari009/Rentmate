@@ -21,7 +21,7 @@ export function ProductGridSkeleton({ count = 4 }) {
   );
 }
 
-function ProductGrid({ products, onClear, onWishlistChange }) {
+function ProductGrid({ products, onClear, onWishlistChange, emptyMessage = "No items match your search" }) {
   const [wishlist, setWishlist] = useState(getWishlist());
 
   const toggleWishlist = (id) => {
@@ -44,7 +44,7 @@ function ProductGrid({ products, onClear, onWishlistChange }) {
         <div className="empty-icon">
           <Package size={28} aria-hidden="true" />
         </div>
-        <h3>No rentals match your search</h3>
+        <h3>{emptyMessage}</h3>
         <p>Try a different keyword, pick another category or raise your budget.</p>
         {onClear && (
           <button type="button" className="btn btn-secondary" onClick={onClear}>

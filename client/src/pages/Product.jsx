@@ -14,20 +14,19 @@ import {
   ChevronLeft,
 } from "lucide-react";
 import {
-  getLocalListings,
-  getLocalBookings,
-  saveLocalBookings,
   getWishlist,
   saveWishlist,
+  getReviews,
+  addReview,
 } from "../utils/storage.js";
-import fallbackProducts from "../data/fallbackProducts.js";
-import { API } from "../utils/config.js";
+import { api } from "../utils/api.js";
+import { useAuth } from "../context/AuthContext.jsx";
 import ProductImage from "../components/ProductImage.jsx";
-import { getReviews, addReview } from "../utils/storage.js";
 
 function Product() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [product, setProduct] = useState(null);
   const [months, setMonths] = useState(1);
   const [startDate, setStartDate] = useState(
@@ -36,58 +35,24 @@ function Product() {
   const [loading, setLoading] = useState(true);
   const [booking, setBooking] = useState(false);
   const [done, setDone] = useState(false);
+  const [createdBooking, setCreatedBooking] = useState(null);
   const [error, setError] = useState("");
   const [reviews, setReviews] = useState(() => getReviews(id));
   const [reviewText, setReviewText] = useState("");
   const [reviewRating, setReviewRating] = useState(5);
-  const [serverAvailable, setServerAvailable] = useState(null);
   const [liked, setLiked] = useState(() => getWishlist().includes(String(id)));
-
-  useEffect(() => {
-    let cancelled = false;
-    async function checkAvailability() {
-      try {
-        const r = await fetch(
-          `${API}/availability/${id}?startDate=${encodeURIComponent(startDate)}&months=${months}`,
-        );
-        if (r.ok) {
-          const data = await r.json();
-          if (!cancelled) setServerAvailable(data.available !== false);
-          return;
-        }
-      } catch {}
-      if (!cancelled) setServerAvailable(null);
-    }
-    checkAvailability();
-    return () => {
-      cancelled = true;
-    };
-  }, [id, startDate, months]);
 
   useEffect(() => {
     async function loadProduct() {
       setLoading(true);
-      const local = getLocalListings().find(
-        (i) => String(i._id || i.id) === String(id),
-      );
-      if (local) {
-        setProduct(local);
-        setLoading(false);
-        return;
-      }
       try {
-        const r = await fetch(`${API}/products/${id}`);
-        if (r.ok) {
-          setProduct(await r.json());
-          setLoading(false);
-          return;
-        }
-      } catch {}
-      const fallback = fallbackProducts.find(
-        (i) => String(i._id) === String(id),
-      );
-      if (fallback) setProduct(fallback);
-      setLoading(false);
+        const data = await api.get(`/products/${id}`);
+        setProduct(data?.product || data);
+      } catch {
+        setProduct(null);
+      } finally {
+        setLoading(false);
+      }
     }
     loadProduct();
   }, [id]);
@@ -123,19 +88,7 @@ function Product() {
   const selectedStart = new Date(`${startDate}T00:00:00`);
   const selectedEnd = new Date(selectedStart);
   selectedEnd.setMonth(selectedEnd.getMonth() + months);
-  const overlapping = getLocalBookings().some(
-    (b) =>
-      String(b.productId) === String(product._id || product.id) &&
-      b.status !== "Returned" &&
-      (() => {
-        const bs = new Date(b.startDate);
-        const be = new Date(bs);
-        be.setMonth(be.getMonth() + Number(b.months || 1));
-        return selectedStart < be && selectedEnd > bs;
-      })(),
-  );
-  const available =
-    product.available !== false && !overlapping && serverAvailable !== false;
+  const available = product.available !== false;
   const deliveryDate = new Date(selectedStart);
   deliveryDate.setDate(deliveryDate.getDate() + 2);
 
@@ -147,22 +100,28 @@ function Product() {
     saveWishlist(next);
     setLiked(!liked);
   }
-  function handleBooking() {
-    if (!available) return;
+
+  async function handleBooking() {
+    if (!user) {
+      navigate("/login", { state: { from: `/product/${id}` } });
+      return;
+    }
     setBooking(true);
     setError("");
-    navigate("/checkout", {
-      state: {
-        product,
-        months,
-        rent,
-        deposit,
-        startDate: new Date(`${startDate}T10:00:00`).toISOString(),
-        deliveryDate: deliveryDate.toISOString(),
-        delivery: 0,
-      },
-    });
-    setBooking(false);
+
+    try {
+      const result = await api.post("/bookings", {
+        productId: product._id,
+        startDate,
+        months: Number(months),
+      });
+      setCreatedBooking(result);
+      setDone(true);
+    } catch (err) {
+      setError(err.message || "Failed to create booking");
+    } finally {
+      setBooking(false);
+    }
   }
 
   function submitReview(e) {
@@ -340,12 +299,12 @@ function Product() {
               )}
               <div>
                 <strong>
-                  {available ? "Available for your dates" : "Unavailable for these dates"}
+                  {available ? "Available to rent" : "Currently unavailable"}
                 </strong>
                 <span>
                   {available
                     ? "Ready to reserve"
-                    : "Choose another start date or duration"}
+                    : "This item is not available for rental"}
                 </span>
               </div>
             </div>
@@ -360,7 +319,6 @@ function Product() {
                     <input
                       id="start-date"
                       type="date"
-                      min={new Date().toISOString().slice(0, 10)}
                       value={startDate}
                       onChange={(e) => setStartDate(e.target.value)}
                     />
@@ -376,6 +334,25 @@ function Product() {
                           {value} mo
                         </button>
                       ))}
+                      <select
+                        aria-label="Custom months"
+                        value={months}
+                        onChange={(e) => setMonths(Number(e.target.value))}
+                        style={{
+                          padding: "6px 8px",
+                          borderRadius: "var(--r-md, 6px)",
+                          border: "1px solid var(--border)",
+                          background: "var(--surface)",
+                          color: "var(--ink)",
+                          fontSize: "0.85rem",
+                        }}
+                      >
+                        {Array.from({ length: 24 }, (_, i) => i + 1).map((m) => (
+                          <option key={m} value={m}>
+                            {m} {m === 1 ? "month" : "months"}
+                          </option>
+                        ))}
+                      </select>
                     </div>
                   </div>
                 </div>
@@ -414,7 +391,7 @@ function Product() {
                     <dd>Included</dd>
                   </div>
                   <div className="summaryTotal">
-                    <dt>Total at booking</dt>
+                    <dt>Estimated total (preview only)</dt>
                     <dd>₹{total.toLocaleString("en-IN")}</dd>
                   </div>
                 </dl>
@@ -443,10 +420,10 @@ function Product() {
                     disabled={booking || !available}
                   >
                     {booking
-                      ? "Opening checkout..."
+                      ? "Booking..."
                       : available
                         ? "Rent this item"
-                        : "Choose available dates"}
+                        : "Currently unavailable"}
 
                     {!booking && available && <ArrowRight size={18} aria-hidden="true" />}
                   </button>
@@ -461,11 +438,17 @@ function Product() {
               <div className="alert alert-success bookingSuccess">
                 <CheckCircle2 size={22} aria-hidden="true" />
                 <div>
-                  <strong>Booking confirmed</strong>
-                  <p>Your {product.name} rental has been added to My Rentals.</p>
+                  <strong>Booking confirmed!</strong>
+                  <p>Your {product.name} rental has been confirmed.</p>
+                  <p>
+                    Total: <strong>₹{Number(createdBooking?.total || 0).toLocaleString("en-IN")}</strong>
+                  </p>
+                  <p>
+                    Payment: <b>{createdBooking?.paymentStatus || "pending"}</b>
+                  </p>
                 </div>
                 <Link to="/rentals" className="success-link">
-                  View rental
+                  View My Rentals
                 </Link>
               </div>
             )}

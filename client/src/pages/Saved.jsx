@@ -2,35 +2,38 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { ArrowRight, Heart } from "lucide-react";
 import { getLocalListings, getWishlist } from "../utils/storage.js";
-import fallbackProducts from "../data/fallbackProducts.js";
-import { API } from "../utils/config.js";
+import { api } from "../utils/api.js";
 import ProductGrid, { ProductGridSkeleton } from "../components/ProductGrid.jsx";
 
 function Saved() {
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [savedIds, setSavedIds] = useState(getWishlist);
 
-  useEffect(() => {
-    async function load() {
-      try {
-        const response = await fetch(`${API}/products`);
-        const data = response.ok ? await response.json() : [];
-        setProducts([
-          ...(Array.isArray(data) && data.length ? data : fallbackProducts),
-          ...getLocalListings(),
-        ]);
-      } catch {
-        setProducts([...fallbackProducts, ...getLocalListings()]);
-      } finally {
-        setLoading(false);
-      }
+  const loadProducts = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await api.get("/products");
+      setProducts([
+        ...(Array.isArray(data) ? data : []),
+        ...getLocalListings(),
+      ]);
+    } catch (err) {
+      setError(err.message || "Failed to load products");
+      setProducts(getLocalListings());
+    } finally {
+      setLoading(false);
     }
-    load();
+  };
+
+  useEffect(() => {
+    loadProducts();
   }, []);
 
   const saved = useMemo(
-    () => products.filter((p) => savedIds.includes(p._id || p.id)),
+    () => products.filter((p) => p && savedIds.includes(String(p._id || p.id))),
     [products, savedIds],
   );
 
@@ -44,6 +47,14 @@ function Saved() {
 
         {loading ? (
           <ProductGridSkeleton count={4} />
+        ) : error && !saved.length ? (
+          <div className="empty-state">
+            <h3>Failed to load saved rentals</h3>
+            <p>{error}</p>
+            <button type="button" className="btn btn-primary" onClick={loadProducts}>
+              Retry
+            </button>
+          </div>
         ) : saved.length ? (
           <ProductGrid products={saved} onWishlistChange={setSavedIds} />
         ) : (
