@@ -270,6 +270,38 @@ export async function getInvoice(invoiceId) {
   return response.json();
 }
 
+export async function recordInvoicePayment(invoiceId, { amount, currency, paymentDate, note, method }) {
+  const token = await getAccessToken();
+  const { apiBase } = getCredentials();
+
+  const payload = {
+    method: method || "PAYPAL",
+    payment_date: (paymentDate ? new Date(paymentDate) : new Date()).toISOString().slice(0, 10),
+    amount: {
+      currency_code: currency || process.env.PAYPAL_CURRENCY || "USD",
+      value: typeof amount === "number" ? amount.toFixed(2) : String(amount),
+    },
+    note: note || "Payment received via PayPal Checkout",
+  };
+
+  const response = await fetch(`${apiBase}/v2/invoicing/invoices/${encodeURIComponent(invoiceId)}/payments`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const errData = await response.json().catch(() => null);
+    console.error(`PayPal recordInvoicePayment error: HTTP ${response.status}`, errData);
+    throw new Error(errData?.message || "Failed to record payment on PayPal invoice");
+  }
+
+  return response.json().catch(() => ({ recorded: true }));
+}
+
 export async function verifyWebhookSignature({ headers, body }) {
   const webhookId = process.env.PAYPAL_WEBHOOK_ID;
   if (!webhookId) {

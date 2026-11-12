@@ -2,7 +2,7 @@ import mongoose from "mongoose";
 import { Booking } from "../models/Booking.js";
 import { Invoice } from "../models/Invoice.js";
 import { WebhookEvent } from "../models/WebhookEvent.js";
-import { verifyWebhookSignature } from "../services/paypal.js";
+import { verifyWebhookSignature, recordInvoicePayment } from "../services/paypal.js";
 
 const STATUS_RANKS = {
   DRAFT: 1,
@@ -322,6 +322,37 @@ export async function handlePayPalWebhook(req, res) {
             booking.paymentStatus = "paid";
             booking.paidAt = booking.paidAt || eventTimestamp;
             console.log(`[PayPal Webhook] Booking ${booking._id} marked PAID via capture ${captureId}`);
+
+            if (booking.paypalInvoiceId && booking.paypalInvoiceStatus !== "PAID") {
+              try {
+                const inrPerUsd = Number(process.env.INR_PER_USD) || 85;
+                const usdAmount = Number((booking.total / inrPerUsd).toFixed(2));
+                await recordInvoicePayment(booking.paypalInvoiceId, {
+                  amount: usdAmount,
+                  currency: process.env.PAYPAL_CURRENCY || "USD",
+                  paymentDate: booking.paidAt,
+                  note: `Paid via PayPal Checkout (Capture ID: ${captureId})`,
+                  method: "PAYPAL",
+                });
+                booking.paypalInvoiceStatus = "PAID";
+                await Invoice.updateOne(
+                  { invoiceId: booking.paypalInvoiceId },
+                  {
+                    $set: { status: "PAID", paidAt: booking.paidAt },
+                    $push: {
+                      eventHistory: {
+                        eventType: "PAYMENT.CAPTURE.COMPLETED",
+                        eventId: event.id,
+                        timestamp: eventTimestamp,
+                        summary: `Invoice synchronized to PAID via capture ${captureId}`,
+                      },
+                    },
+                  }
+                );
+              } catch (syncErr) {
+                console.warn(`[PayPal Webhook] Sync payment to invoice ${booking.paypalInvoiceId} failed: ${syncErr.message}`);
+              }
+            }
           } else if (eventType === "PAYMENT.CAPTURE.PENDING") {
             // Pending payment never marks full rental as paid
             booking.paymentStatus = "pending";

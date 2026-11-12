@@ -7,6 +7,7 @@ import {
   capture,
   createInvoiceEndpoint,
   getInvoiceEndpoint,
+  getInvoiceHistoryEndpoint,
   handleWebhook,
 } from "../controllers/paymentController.js";
 import { handlePayPalWebhook } from "../controllers/paypalWebhookController.js";
@@ -33,5 +34,6 @@ router.post("/create-order", requireAuth, createOrder);
 router.post("/capture", requireAuth, capture);
 router.post("/create-invoice", requireAuth, createInvoiceEndpoint);
 router.get("/invoice/:bookingId", requireAuth, getInvoiceEndpoint);
+router.get("/history/:bookingId", requireAuth, getInvoiceHistoryEndpoint);
 
 export default router;

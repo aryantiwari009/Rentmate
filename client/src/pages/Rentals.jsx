@@ -10,6 +10,9 @@ import {
   CheckCircle2,
   FileText,
   ExternalLink,
+  Download,
+  History,
+  CreditCard,
 } from "lucide-react";
 import { api } from "../utils/api.js";
 import { useAuth } from "../context/AuthContext.jsx";
@@ -27,6 +30,8 @@ function Rentals() {
   const [cancelError, setCancelError] = useState(null);
   const [generatingInvoice, setGeneratingInvoice] = useState({});
   const [invoiceError, setInvoiceError] = useState({});
+  const [historyModal, setHistoryModal] = useState(null);
+  const [loadingHistory, setLoadingHistory] = useState(false);
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -91,6 +96,23 @@ function Rentals() {
       }));
     } finally {
       setGeneratingInvoice((prev) => ({ ...prev, [bookingId]: false }));
+    }
+  }
+
+  async function handleViewHistory(booking) {
+    setLoadingHistory(true);
+    setHistoryModal({ booking, data: null, error: null });
+    try {
+      const data = await api.get(`/payments/history/${booking._id}`);
+      setHistoryModal({ booking, data, error: null });
+    } catch (err) {
+      setHistoryModal({
+        booking,
+        data: null,
+        error: err.message || "Failed to load invoice history",
+      });
+    } finally {
+      setLoadingHistory(false);
     }
   }
 
@@ -227,29 +249,35 @@ function Rentals() {
                     </div>
                   )}
 
-                  {booking.paypalInvoiceUrl ? (
-                    <div style={{ marginTop: "var(--s-2)", marginBottom: "var(--s-2)" }}>
-                      <a
-                        href={booking.paypalInvoiceUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="btn btn-secondary btn-sm"
-                        style={{
-                          display: "inline-flex",
-                          alignItems: "center",
-                          gap: "5px",
-                          fontSize: "0.75rem",
-                          padding: "4px 10px",
-                        }}
-                      >
-                        <FileText size={14} aria-hidden="true" />
-                        <span>View PayPal Invoice</span>
-                        <ExternalLink size={12} aria-hidden="true" />
-                      </a>
-                    </div>
-                  ) : (
-                    booking.status === "active" && (
-                      <div style={{ marginTop: "var(--s-2)", marginBottom: "var(--s-2)" }}>
+                  {booking.paymentStatus === "paid" ? (
+                    <div
+                      style={{
+                        display: "flex",
+                        gap: "8px",
+                        flexWrap: "wrap",
+                        marginTop: "var(--s-2)",
+                        marginBottom: "var(--s-2)",
+                      }}
+                    >
+                      {booking.paypalInvoiceUrl ? (
+                        <a
+                          href={booking.paypalInvoiceUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="btn btn-secondary btn-sm"
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: "5px",
+                            fontSize: "0.75rem",
+                            padding: "4px 10px",
+                          }}
+                        >
+                          <Download size={14} aria-hidden="true" />
+                          <span>Download Invoice</span>
+                          <ExternalLink size={12} aria-hidden="true" />
+                        </a>
+                      ) : (
                         <button
                           type="button"
                           className="btn btn-secondary btn-sm"
@@ -263,15 +291,99 @@ function Rentals() {
                             padding: "4px 10px",
                           }}
                         >
-                          <FileText size={14} aria-hidden="true" />
+                          <Download size={14} aria-hidden="true" />
                           <span>
                             {generatingInvoice[booking._id]
-                              ? "Creating Invoice..."
-                              : "Request PayPal Invoice"}
+                              ? "Generating Receipt..."
+                              : "Download Invoice"}
                           </span>
                         </button>
+                      )}
+                      <button
+                        type="button"
+                        className="btn btn-outline btn-sm"
+                        onClick={() => handleViewHistory(booking)}
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "4px",
+                          fontSize: "0.75rem",
+                          padding: "4px 10px",
+                        }}
+                      >
+                        <History size={13} aria-hidden="true" />
+                        <span>Invoice History</span>
+                      </button>
+                    </div>
+                  ) : (
+                    <div style={{ marginTop: "var(--s-2)", marginBottom: "var(--s-2)" }}>
+                      <div
+                        style={{
+                          display: "flex",
+                          gap: "8px",
+                          flexWrap: "wrap",
+                          alignItems: "center",
+                        }}
+                      >
+                        {booking.paypalInvoiceUrl ? (
+                          <a
+                            href={booking.paypalInvoiceUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="btn btn-primary btn-sm"
+                            style={{
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: "5px",
+                              fontSize: "0.75rem",
+                              padding: "4px 10px",
+                            }}
+                          >
+                            <CreditCard size={14} aria-hidden="true" />
+                            <span>Pay Invoice</span>
+                            <ExternalLink size={12} aria-hidden="true" />
+                          </a>
+                        ) : (
+                          booking.status === "active" && (
+                            <button
+                              type="button"
+                              className="btn btn-secondary btn-sm"
+                              disabled={generatingInvoice[booking._id]}
+                              onClick={() => handleGenerateInvoice(booking._id)}
+                              style={{
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: "5px",
+                                fontSize: "0.75rem",
+                                padding: "4px 10px",
+                              }}
+                            >
+                              <FileText size={14} aria-hidden="true" />
+                              <span>
+                                {generatingInvoice[booking._id]
+                                  ? "Creating Invoice..."
+                                  : "Request PayPal Invoice"}
+                              </span>
+                            </button>
+                          )
+                        )}
+                        <button
+                          type="button"
+                          className="btn btn-outline btn-sm"
+                          onClick={() => handleViewHistory(booking)}
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: "4px",
+                            fontSize: "0.75rem",
+                            padding: "4px 10px",
+                          }}
+                        >
+                          <History size={13} aria-hidden="true" />
+                          <span>Invoice History</span>
+                        </button>
                       </div>
-                    )
+                    </div>
                   )}
 
                   {invoiceError[booking._id] && (
@@ -437,6 +549,188 @@ function Rentals() {
                   : cancelTarget.paymentStatus === "paid"
                   ? "Cancel & Refund"
                   : "Confirm cancellation"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {historyModal && (
+        <div
+          className="confirm-modal-backdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="history-modal-title"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setHistoryModal(null);
+            }
+          }}
+        >
+          <div className="confirm-modal-dialog" style={{ maxWidth: "560px", width: "95%" }}>
+            <div
+              className="confirm-modal-header"
+              style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                <div
+                  className="confirm-modal-icon"
+                  aria-hidden="true"
+                  style={{ background: "rgba(59, 130, 246, 0.1)", color: "#3b82f6" }}
+                >
+                  <History size={22} />
+                </div>
+                <h2 id="history-modal-title" className="confirm-modal-title" style={{ margin: 0 }}>
+                  Invoice & Payment History
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setHistoryModal(null)}
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  cursor: "pointer",
+                  color: "inherit",
+                  opacity: 0.7,
+                }}
+                aria-label="Close"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="confirm-modal-body" style={{ marginTop: "var(--s-3)" }}>
+              <div
+                style={{
+                  background: "var(--surface-sunken, rgba(0, 0, 0, 0.04))",
+                  padding: "12px 14px",
+                  borderRadius: "8px",
+                  fontSize: "0.875rem",
+                  marginBottom: "16px",
+                  display: "grid",
+                  gridTemplateColumns: "1fr 1fr",
+                  gap: "10px",
+                }}
+              >
+                <div>
+                  <div style={{ opacity: 0.7, fontSize: "0.75rem" }}>Rental Item</div>
+                  <strong>{historyModal.booking?.product?.name || "Rental"}</strong>
+                </div>
+                <div>
+                  <div style={{ opacity: 0.7, fontSize: "0.75rem" }}>Total</div>
+                  <strong>{money(historyModal.booking?.total)}</strong>
+                </div>
+                <div>
+                  <div style={{ opacity: 0.7, fontSize: "0.75rem" }}>Payment Status</div>
+                  <span className={`payment-badge ${historyModal.booking?.paymentStatus || "pending"}`}>
+                    {historyModal.booking?.paymentStatus || "pending"}
+                  </span>
+                </div>
+                <div>
+                  <div style={{ opacity: 0.7, fontSize: "0.75rem" }}>Invoice Status</div>
+                  <span style={{ fontWeight: 600, textTransform: "uppercase", fontSize: "0.75rem" }}>
+                    {historyModal.data?.invoiceStatus ||
+                      historyModal.booking?.paypalInvoiceStatus ||
+                      "Not Generated"}
+                  </span>
+                </div>
+              </div>
+
+              {historyModal.data?.invoiceId && (
+                <div style={{ fontSize: "0.8125rem", marginBottom: "14px", lineHeight: "1.5" }}>
+                  <div>
+                    <strong>PayPal Invoice ID:</strong> {historyModal.data.invoiceId}
+                  </div>
+                  {historyModal.data?.paypalCaptureId && (
+                    <div>
+                      <strong>PayPal Capture ID:</strong> {historyModal.data.paypalCaptureId}
+                    </div>
+                  )}
+                  {historyModal.data?.paypalOrderId && (
+                    <div>
+                      <strong>PayPal Order ID:</strong> {historyModal.data.paypalOrderId}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <h4 style={{ margin: "14px 0 8px", fontSize: "0.875rem", fontWeight: 600 }}>
+                Event Timeline
+              </h4>
+
+              {loadingHistory ? (
+                <div style={{ textAlign: "center", padding: "20px 0" }}>
+                  <div className="loader" style={{ margin: "0 auto 8px" }} />
+                  <p style={{ fontSize: "0.8125rem", opacity: 0.7 }}>Loading history...</p>
+                </div>
+              ) : historyModal.error ? (
+                <div className="form-error" style={{ fontSize: "0.8125rem" }}>
+                  {historyModal.error}
+                </div>
+              ) : historyModal.data?.events && historyModal.data.events.length > 0 ? (
+                <div style={{ maxHeight: "220px", overflowY: "auto", paddingRight: "4px" }}>
+                  {historyModal.data.events.map((ev, i) => (
+                    <div
+                      key={i}
+                      style={{
+                        display: "flex",
+                        gap: "10px",
+                        padding: "8px 0",
+                        borderBottom: "1px solid var(--border-subtle, rgba(0,0,0,0.06))",
+                        fontSize: "0.8125rem",
+                      }}
+                    >
+                      <div
+                        style={{
+                          minWidth: "120px",
+                          color: "var(--muted, #64748b)",
+                          fontSize: "0.75rem",
+                        }}
+                      >
+                        {ev.timestamp ? new Date(ev.timestamp).toLocaleString("en-IN") : "Recent"}
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: 600 }}>{ev.eventType}</div>
+                        <div style={{ opacity: 0.85, fontSize: "0.75rem" }}>
+                          {ev.summary || "Event recorded"}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p
+                  style={{
+                    fontSize: "0.8125rem",
+                    opacity: 0.7,
+                    fontStyle: "italic",
+                    margin: "10px 0",
+                  }}
+                >
+                  No webhook or invoice events recorded yet.
+                </p>
+              )}
+            </div>
+
+            <div className="confirm-modal-actions" style={{ marginTop: "16px" }}>
+              {historyModal.data?.invoiceUrl && (
+                <a
+                  href={historyModal.data.invoiceUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="btn btn-primary btn-sm"
+                  style={{ display: "inline-flex", alignItems: "center", gap: "4px" }}
+                >
+                  <ExternalLink size={14} /> View on PayPal
+                </a>
+              )}
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={() => setHistoryModal(null)}
+              >
+                Close
               </button>
             </div>
           </div>
