@@ -23,7 +23,7 @@ export async function chat(req, res) {
   }
 
   try {
-    const { reply, proposals } = await runAssistant(clean);
+    const { reply, proposals } = await runAssistant(clean, { user: req.user });
     return res.json({ reply, proposals });
   } catch (err) {
     console.error("Assistant error:", err.message);

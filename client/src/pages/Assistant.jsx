@@ -16,6 +16,134 @@ import PayButton from "../components/PayButton.jsx";
 
 const inr = (n) => `₹${Number(n || 0).toLocaleString("en-IN")}`;
 
+function formatInlineText(text) {
+  if (!text) return null;
+
+  // Split tokens for: [text](url), https?://..., or **bold**
+  const regex = /(\[[^\]]+\]\([^)]+\)|https?:\/\/[^\s<)]+|\*\*[^*]+\*\*)/g;
+  const parts = text.split(regex);
+
+  return parts.map((part, idx) => {
+    if (!part) return null;
+    if (part.startsWith("**") && part.endsWith("**") && part.length >= 4) {
+      return (
+        <strong key={idx} style={{ color: "inherit", fontWeight: 600 }}>
+          {part.slice(2, -2)}
+        </strong>
+      );
+    }
+    const mdLink = part.match(/^\[([^\]]+)\]\((https?:\/\/[^)]+)\)$/);
+    if (mdLink) {
+      return (
+        <a
+          key={idx}
+          href={mdLink[2]}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{
+            color: "var(--primary, #2a8c82)",
+            textDecoration: "underline",
+            fontWeight: 500,
+            wordBreak: "break-all",
+          }}
+        >
+          {mdLink[1]}
+        </a>
+      );
+    }
+    if (/^https?:\/\//.test(part)) {
+      return (
+        <a
+          key={idx}
+          href={part}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{
+            color: "var(--primary, #2a8c82)",
+            textDecoration: "underline",
+            fontWeight: 500,
+            wordBreak: "break-all",
+          }}
+        >
+          {part}
+        </a>
+      );
+    }
+    return part;
+  });
+}
+
+function formatMessageContent(content) {
+  if (!content) return null;
+
+  const lines = content.split("\n");
+  const elements = [];
+  let currentList = [];
+  let isOrderedList = false;
+
+  const flushList = () => {
+    if (currentList.length > 0) {
+      const ListTag = isOrderedList ? "ol" : "ul";
+      elements.push(
+        <ListTag
+          key={`list-${elements.length}`}
+          style={{
+            margin: "var(--s-1) 0 var(--s-2) 1.25rem",
+            padding: 0,
+            display: "flex",
+            flexDirection: "column",
+            gap: "4px",
+          }}
+        >
+          {currentList.map((item, idx) => (
+            <li key={idx} style={{ lineHeight: 1.5 }}>
+              {formatInlineText(item)}
+            </li>
+          ))}
+        </ListTag>
+      );
+      currentList = [];
+    }
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    const rawLine = lines[i];
+    const trimmed = rawLine.trim();
+
+    // Ignore hallucinated bracket button strings like "[Confirm Booking]"
+    if (/^\[\s*confirm(\s+booking)?\s*\]$/i.test(trimmed)) {
+      continue;
+    }
+
+    const bulletMatch = trimmed.match(/^[-*•]\s+(.*)$/);
+    const orderedMatch = trimmed.match(/^(\d+)\.\s+(.*)$/);
+
+    if (bulletMatch) {
+      if (isOrderedList) flushList();
+      isOrderedList = false;
+      currentList.push(bulletMatch[1]);
+    } else if (orderedMatch) {
+      if (!isOrderedList && currentList.length > 0) flushList();
+      isOrderedList = true;
+      currentList.push(orderedMatch[2]);
+    } else {
+      flushList();
+      if (trimmed === "") {
+        elements.push(<div key={`spacer-${i}`} style={{ height: "6px" }} />);
+      } else {
+        elements.push(
+          <p key={`p-${i}`} style={{ margin: "var(--s-1) 0", lineHeight: 1.55 }}>
+            {formatInlineText(trimmed)}
+          </p>
+        );
+      }
+    }
+  }
+
+  flushList();
+  return <div className="formatted-message-body">{elements}</div>;
+}
+
 const formatProposalDate = (dateStr) =>
   new Date(dateStr).toLocaleDateString("en-IN", {
     day: "numeric",
@@ -32,7 +160,7 @@ function Assistant() {
       id: "initial",
       role: "assistant",
       content:
-        "Hello! I am your RentMate assistant. Tell me what you need, your budget, and when you would like to start renting. I can find products and prepare bookings for you.",
+        "Hello! I am your RentMate assistant powered by PayPal AI. Tell me what you need, your budget, and when you would like to start renting. I can find catalog items, propose bookings, help set up PayPal payments, and generate official PayPal invoices for you.",
       proposals: [],
     },
   ]);
@@ -205,10 +333,10 @@ function Assistant() {
           <span className="assistant-icon">
             <Sparkles size={26} aria-hidden="true" />
           </span>
-          <h1>Your rental assistant</h1>
+          <h1>RentMate PayPal AI Assistant</h1>
           <p>
-            Tell me what you need, your budget and dates. I will find the right items
-            and check availability directly from our live catalog.
+            Tell me what you need, your budget and dates. I will find the right items,
+            check availability from our live catalog, set up PayPal payments, and generate official PayPal invoices.
           </p>
         </header>
 
@@ -259,10 +387,10 @@ function Assistant() {
                   <Sparkles size={18} aria-hidden="true" />
                 </span>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <span>RentMate AI</span>
-                  <p style={{ whiteSpace: "pre-wrap", margin: "var(--s-1) 0" }}>
-                    {msg.content}
-                  </p>
+                  <span style={{ fontWeight: 600 }}>RentMate PayPal AI</span>
+                  <div className="ai-message-text" style={{ margin: "var(--s-1) 0" }}>
+                    {formatMessageContent(msg.content)}
+                  </div>
 
                   {Array.isArray(msg.proposals) && msg.proposals.length > 0 && (
                     <div className="proposal-list">

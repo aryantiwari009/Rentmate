@@ -1,6 +1,15 @@
 import mongoose from "mongoose";
 import { Booking } from "../models/Booking.js";
-import { createOrder as paypalCreateOrder, captureOrder as paypalCaptureOrder } from "../services/paypal.js";
+import { Invoice } from "../models/Invoice.js";
+import { handlePayPalWebhook } from "./paypalWebhookController.js";
+import {
+  createOrder as paypalCreateOrder,
+  captureOrder as paypalCaptureOrder,
+  getOrder as paypalGetOrder,
+  createInvoice as paypalCreateInvoice,
+  sendInvoice as paypalSendInvoice,
+  getInvoice as paypalGetInvoice,
+} from "../services/paypal.js";
 
 export function getConfig(req, res) {
   const clientId = process.env.PAYPAL_CLIENT_ID;
@@ -138,4 +147,149 @@ export async function capture(req, res) {
   await booking.save();
 
   return res.json(booking);
+}
+
+function resolvePayerUrl(invoiceData, invoiceId) {
+  if (invoiceData?.detail?.metadata?.payer_view_url) {
+    return invoiceData.detail.metadata.payer_view_url;
+  }
+  const link = invoiceData?.links?.find(
+    (l) => l.rel === "payer-view" || l.rel === "payer_view"
+  );
+  if (link?.href) return link.href;
+
+  const isSandbox = (process.env.PAYPAL_API || "").includes("sandbox");
+  const host = isSandbox ? "https://www.sandbox.paypal.com" : "https://www.paypal.com";
+  return `${host}/invoice/p/#${invoiceId}`;
+}
+
+export async function createInvoiceEndpoint(req, res) {
+  const { bookingId, note } = req.body;
+
+  if (!bookingId || typeof bookingId !== "string" || !mongoose.isValidObjectId(bookingId)) {
+    return res.status(400).json({ message: "Valid bookingId is required" });
+  }
+
+  const booking = await Booking.findOne({
+    _id: bookingId,
+    user: req.user._id,
+  }).populate("product");
+
+  if (!booking) {
+    return res.status(404).json({ message: "Booking not found" });
+  }
+
+  if (booking.status !== "active") {
+    return res.status(409).json({ message: "Invoices can only be created for active bookings" });
+  }
+
+  // If already generated, return existing invoice info
+  if (booking.paypalInvoiceId && booking.paypalInvoiceUrl) {
+    return res.json({
+      invoiceId: booking.paypalInvoiceId,
+      invoiceUrl: booking.paypalInvoiceUrl,
+      alreadyCreated: true,
+    });
+  }
+
+  try {
+    const created = await paypalCreateInvoice({
+      booking,
+      recipientEmail: req.user.email,
+      recipientName: req.user.name,
+      note: note || `RentMate Rental Invoice for ${booking.product?.name || "booking"}`,
+    });
+
+    const invoiceId = created.id;
+    let invoiceUrl = resolvePayerUrl(created, invoiceId);
+
+    // Send the invoice via PayPal email notification
+    try {
+      await paypalSendInvoice(invoiceId);
+      const detailed = await paypalGetInvoice(invoiceId);
+      if (detailed) {
+        invoiceUrl = resolvePayerUrl(detailed, invoiceId);
+      }
+    } catch (sendErr) {
+      console.warn(`Invoice send warning for ${invoiceId}:`, sendErr.message);
+    }
+
+    booking.paypalInvoiceId = invoiceId;
+    booking.paypalInvoiceUrl = invoiceUrl;
+    booking.paypalInvoiceStatus = "SENT";
+    await booking.save();
+
+    const inrPerUsd = Number(process.env.INR_PER_USD) || 85;
+    await Invoice.findOneAndUpdate(
+      { invoiceId },
+      {
+        $set: {
+          invoiceId,
+          booking: booking._id,
+          user: req.user._id,
+          status: "SENT",
+          amount: Number((booking.total / inrPerUsd).toFixed(2)),
+          currency: process.env.PAYPAL_CURRENCY || "USD",
+          invoiceUrl,
+          recipientEmail: req.user.email,
+          recipientName: req.user.name,
+          note: note || `RentMate Rental Invoice for ${booking.product?.name || "booking"}`,
+          rawDetails: created,
+        },
+      },
+      { upsert: true, new: true }
+    );
+
+    return res.json({
+      invoiceId,
+      invoiceUrl,
+      status: "SENT",
+    });
+  } catch (err) {
+    console.error(`create-invoice failed for booking ${booking._id}:`, err.message);
+    const isPermissionError =
+      err.message?.toLowerCase().includes("permission") ||
+      err.message?.toLowerCase().includes("authorization failed");
+    const message = isPermissionError
+      ? "PayPal Invoicing permission is not enabled on your PayPal Developer App. In your PayPal Developer Dashboard (Apps & Credentials), select your App and enable 'Invoicing' under App Feature Options."
+      : err.message || "Failed to create PayPal invoice";
+    return res.status(500).json({ message });
+  }
+}
+
+export async function getInvoiceEndpoint(req, res) {
+  const { bookingId } = req.params;
+
+  if (!bookingId || !mongoose.isValidObjectId(bookingId)) {
+    return res.status(400).json({ message: "Valid bookingId is required" });
+  }
+
+  const booking = await Booking.findOne({
+    _id: bookingId,
+    user: req.user._id,
+  });
+
+  if (!booking) {
+    return res.status(404).json({ message: "Booking not found" });
+  }
+
+  if (!booking.paypalInvoiceId) {
+    return res.status(404).json({ message: "No PayPal invoice associated with this booking" });
+  }
+
+  try {
+    const invoice = await paypalGetInvoice(booking.paypalInvoiceId);
+    if (!invoice) {
+      return res.status(404).json({ message: "Invoice not found on PayPal" });
+    }
+    const invoiceUrl = resolvePayerUrl(invoice, booking.paypalInvoiceId);
+    return res.json({ invoice, invoiceUrl });
+  } catch (err) {
+    console.error(`get-invoice failed for booking ${bookingId}:`, err.message);
+    return res.status(500).json({ message: "Failed to retrieve invoice" });
+  }
+}
+
+export async function handleWebhook(req, res) {
+  return handlePayPalWebhook(req, res);
 }

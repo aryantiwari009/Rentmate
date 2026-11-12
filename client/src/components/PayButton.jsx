@@ -40,7 +40,7 @@ function loadPayPalSdk(clientId, currency) {
     }
 
     const script = document.createElement("script");
-    script.src = `https://www.paypal.com/sdk/js?client-id=${encodeURIComponent(clientId)}&currency=${encodeURIComponent(currency || "USD")}&intent=capture`;
+    script.src = `https://www.paypal.com/sdk/js?client-id=${encodeURIComponent(clientId)}&currency=${encodeURIComponent(currency || "USD")}&intent=capture&components=buttons,messages&enable-funding=paylater`;
     script.async = true;
     script.onload = () => resolve(window.paypal);
     script.onerror = () => {
@@ -55,6 +55,7 @@ function loadPayPalSdk(clientId, currency) {
 
 function PayButton({ booking, onSuccess }) {
   const containerRef = useRef(null);
+  const messagesRef = useRef(null);
   const [config, setConfig] = useState(cachedConfig);
   const [configLoading, setConfigLoading] = useState(!cachedConfig);
   const [configError, setConfigError] = useState(null);
@@ -104,6 +105,12 @@ function PayButton({ booking, onSuccess }) {
 
     let mounted = true;
     let buttonsInstance = null;
+    let messagesInstance = null;
+
+    const usdAmount =
+      booking?.total && config?.inrPerUsd
+        ? (booking.total / config.inrPerUsd).toFixed(2)
+        : null;
 
     loadPayPalSdk(config.clientId, config.currency)
       .then((paypal) => {
@@ -172,6 +179,22 @@ function PayButton({ booking, onSuccess }) {
             console.error("PayPal render error:", err);
           }
         });
+
+        // Mount PayPal Pay Later messaging
+        if (paypal.Messages && messagesRef.current && usdAmount) {
+          try {
+            messagesRef.current.innerHTML = "";
+            messagesInstance = paypal.Messages({
+              amount: Number(usdAmount),
+              placement: "product",
+              style: {
+                layout: "text",
+                logo: { type: "inline" },
+              },
+            });
+            messagesInstance.render(messagesRef.current).catch(() => {});
+          } catch (_) {}
+        }
       })
       .catch((err) => {
         if (mounted) {
@@ -186,11 +209,19 @@ function PayButton({ booking, onSuccess }) {
           buttonsInstance.close();
         } catch (_) {}
       }
+      if (messagesInstance && typeof messagesInstance.close === "function") {
+        try {
+          messagesInstance.close();
+        } catch (_) {}
+      }
       if (containerRef.current) {
         containerRef.current.innerHTML = "";
       }
+      if (messagesRef.current) {
+        messagesRef.current.innerHTML = "";
+      }
     };
-  }, [config?.clientId, config?.currency, paid, booking?._id, onSuccess]);
+  }, [config?.clientId, config?.currency, config?.inrPerUsd, paid, booking?._id, booking?.total, onSuccess]);
 
   if (paid) {
     return (
@@ -248,6 +279,24 @@ function PayButton({ booking, onSuccess }) {
           opacity: processing ? 0.6 : 1,
           minHeight: "38px",
           maxWidth: "280px",
+        }}
+      />
+
+      <div
+        ref={messagesRef}
+        className="pay-later-container"
+        data-pp-message
+        data-pp-placement="product"
+        data-pp-amount={
+          booking?.total && config?.inrPerUsd
+            ? (booking.total / config.inrPerUsd).toFixed(2)
+            : undefined
+        }
+        style={{
+          marginTop: "4px",
+          maxWidth: "280px",
+          minHeight: "18px",
+          fontSize: "0.75rem",
         }}
       />
 

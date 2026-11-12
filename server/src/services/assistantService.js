@@ -1,15 +1,25 @@
+import mongoose from "mongoose";
 import { Product } from "../models/Product.js";
+import { Booking } from "../models/Booking.js";
 import { buildProductFilter } from "./productSearch.js";
 import { prepareBooking } from "./bookingService.js";
+import {
+  createOrder as paypalCreateOrder,
+  getOrder as paypalGetOrder,
+  createInvoice as paypalCreateInvoice,
+  sendInvoice as paypalSendInvoice,
+  getInvoice as paypalGetInvoice,
+} from "./paypal.js";
 
 const SYSTEM_PROMPT =
-  "You are RentMate's rental assistant. Help people find items to rent by the month. " +
+  "You are RentMate's official PayPal AI rental assistant. You help people find items to rent by the month, check pricing and availability, prepare bookings, and manage PayPal checkout orders and invoices. " +
   "Use search_products to find real items, and only recommend items it returns. " +
   "When the user has chosen an item, a start date and a number of months, call propose_booking. " +
+  "When propose_booking returns a proposal, do NOT repeat the line-item numbers, deposit, or total calculation in your text, and never write fake brackets or buttons like '[Confirm Booking]' because the application renders a dedicated interactive card with the full breakdown and a Confirm button directly below your message. Simply invite the user to review the proposal card and confirm. " +
+  "When the user asks to pay with PayPal, generate an invoice, or check payment status, use the corresponding PayPal tools. " +
   "You never confirm or create bookings yourself: the user confirms with a button. " +
   "Never work out prices yourself. Quote only the numbers that tools return. " +
-  "Prices are in rupees. Answer in short plain text, with no tables." +
-  "Never write buttons, links or markdown. The app shows its own Confirm button.";
+  "Prices are in rupees. Answer in concise, natural, friendly text without raw markdown symbols or fake buttons.";
 
 const tools = [
   {
@@ -28,7 +38,7 @@ const tools = [
       },
     },
   },
-    {
+  {
     type: "function",
     function: {
       name: "propose_booking",
@@ -42,6 +52,67 @@ const tools = [
           months: { type: "number", description: "Whole number of months, 1 to 24" },
         },
         required: ["productId", "startDate", "months"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "paypal_create_invoice",
+      description:
+        "Create and send an official PayPal invoice for a user's booking with an immediate payable link. Call when the user requests an invoice or bill.",
+      parameters: {
+        type: "object",
+        properties: {
+          bookingId: { type: "string", description: "The ID of the booking to invoice" },
+          note: { type: "string", description: "Optional note or custom instructions for the invoice" },
+        },
+        required: ["bookingId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "paypal_get_invoice",
+      description:
+        "Get current status and details of a PayPal invoice.",
+      parameters: {
+        type: "object",
+        properties: {
+          invoiceId: { type: "string", description: "The PayPal invoice ID" },
+        },
+        required: ["invoiceId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "paypal_create_order",
+      description:
+        "Create a PayPal payment order for a booking.",
+      parameters: {
+        type: "object",
+        properties: {
+          bookingId: { type: "string", description: "The booking ID to pay for" },
+        },
+        required: ["bookingId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "paypal_get_order_status",
+      description:
+        "Check status and details of a PayPal checkout order.",
+      parameters: {
+        type: "object",
+        properties: {
+          orderId: { type: "string", description: "The PayPal order ID" },
+        },
+        required: ["orderId"],
       },
     },
   },
@@ -115,8 +186,173 @@ async function runProposeBooking(rawArguments, proposals) {
   return { ok: true, proposal };
 }
 
+async function runPayPalCreateInvoice(rawArguments, context) {
+  let args = {};
+  try {
+    args = JSON.parse(rawArguments);
+  } catch {
+    return { ok: false, reason: "Could not read tool arguments" };
+  }
+
+  const { bookingId, note } = args;
+  if (!bookingId || !mongoose.isValidObjectId(bookingId)) {
+    return { ok: false, reason: "Invalid booking ID" };
+  }
+
+  const query = { _id: bookingId };
+  if (context?.user?._id) {
+    query.user = context.user._id;
+  }
+
+  const booking = await Booking.findOne(query).populate("product");
+  if (!booking) {
+    return { ok: false, reason: "Booking not found" };
+  }
+
+  if (booking.paypalInvoiceUrl && booking.paypalInvoiceId) {
+    return {
+      ok: true,
+      invoiceId: booking.paypalInvoiceId,
+      invoiceUrl: booking.paypalInvoiceUrl,
+      status: "SENT",
+      note: "Invoice already exists for this booking",
+    };
+  }
+
+  try {
+    const created = await paypalCreateInvoice({
+      booking,
+      recipientEmail: context?.user?.email,
+      recipientName: context?.user?.name,
+      note,
+    });
+
+    const invoiceId = created.id;
+    let invoiceUrl = created?.detail?.metadata?.payer_view_url;
+    try {
+      await paypalSendInvoice(invoiceId);
+      const detailed = await paypalGetInvoice(invoiceId);
+      if (detailed?.detail?.metadata?.payer_view_url) {
+        invoiceUrl = detailed.detail.metadata.payer_view_url;
+      }
+    } catch (_) {}
+
+    if (!invoiceUrl) {
+      const isSandbox = (process.env.PAYPAL_API || "").includes("sandbox");
+      const host = isSandbox ? "https://www.sandbox.paypal.com" : "https://www.paypal.com";
+      invoiceUrl = `${host}/invoice/p/#${invoiceId}`;
+    }
+
+    booking.paypalInvoiceId = invoiceId;
+    booking.paypalInvoiceUrl = invoiceUrl;
+    await booking.save();
+
+    return {
+      ok: true,
+      invoiceId,
+      invoiceUrl,
+      status: "SENT",
+    };
+  } catch (err) {
+    const isPermissionError =
+      err.message?.toLowerCase().includes("permission") ||
+      err.message?.toLowerCase().includes("authorization failed");
+    const reason = isPermissionError
+      ? "PayPal Invoicing permission is disabled on your PayPal Developer App. Please enable the 'Invoicing' checkbox under App Feature Options in your PayPal Developer Dashboard."
+      : err.message || "Failed to create invoice";
+    return { ok: false, reason };
+  }
+}
+
+async function runPayPalGetInvoice(rawArguments) {
+  let args = {};
+  try {
+    args = JSON.parse(rawArguments);
+  } catch {
+    return { ok: false, reason: "Could not read tool arguments" };
+  }
+
+  const invoice = await paypalGetInvoice(args.invoiceId);
+  if (!invoice) return { ok: false, reason: "Invoice not found on PayPal" };
+
+  return {
+    ok: true,
+    invoiceId: invoice.id,
+    status: invoice.status,
+    amount: invoice.amount?.value,
+    currency: invoice.amount?.currency_code,
+    invoiceUrl: invoice.detail?.metadata?.payer_view_url,
+  };
+}
+
+async function runPayPalCreateOrder(rawArguments, context) {
+  let args = {};
+  try {
+    args = JSON.parse(rawArguments);
+  } catch {
+    return { ok: false, reason: "Could not read tool arguments" };
+  }
+
+  const { bookingId } = args;
+  if (!bookingId || !mongoose.isValidObjectId(bookingId)) {
+    return { ok: false, reason: "Invalid booking ID" };
+  }
+
+  const query = { _id: bookingId };
+  if (context?.user?._id) {
+    query.user = context.user._id;
+  }
+
+  const booking = await Booking.findOne(query);
+  if (!booking) {
+    return { ok: false, reason: "Booking not found" };
+  }
+
+  const inrPerUsd = Number(process.env.INR_PER_USD) || 85;
+  const currency = process.env.PAYPAL_CURRENCY || "USD";
+  const amount = (booking.total / inrPerUsd).toFixed(2);
+
+  try {
+    const order = await paypalCreateOrder({
+      amount,
+      currency,
+      bookingId: booking._id.toString(),
+      description: `RentMate Booking #${booking._id}`,
+    });
+
+    booking.paypalOrderId = order.id;
+    await booking.save();
+
+    return {
+      ok: true,
+      orderId: order.id,
+      status: order.status,
+    };
+  } catch (err) {
+    return { ok: false, reason: err.message || "Failed to create PayPal order" };
+  }
+}
+
+async function runPayPalGetOrderStatus(rawArguments) {
+  let args = {};
+  try {
+    args = JSON.parse(rawArguments);
+  } catch {
+    return { ok: false, reason: "Could not read tool arguments" };
+  }
+
+  const order = await paypalGetOrder(args.orderId);
+  if (!order) return { ok: false, reason: "Order not found" };
+
+  return {
+    ok: true,
+    orderId: order.id,
+    status: order.status,
+  };
+}
+
 // userMessages: already validated list of { role: "user" | "assistant", content }
-export async function runAssistant(userMessages) {
+export async function runAssistant(userMessages, context = {}) {
   const messages = [{ role: "system", content: SYSTEM_PROMPT }, ...userMessages];
   const proposals = [];
 
@@ -134,6 +370,14 @@ export async function runAssistant(userMessages) {
         result = await runSearchProducts(call.function.arguments);
       } else if (call.function.name === "propose_booking") {
         result = await runProposeBooking(call.function.arguments, proposals);
+      } else if (call.function.name === "paypal_create_invoice") {
+        result = await runPayPalCreateInvoice(call.function.arguments, context);
+      } else if (call.function.name === "paypal_get_invoice") {
+        result = await runPayPalGetInvoice(call.function.arguments);
+      } else if (call.function.name === "paypal_create_order") {
+        result = await runPayPalCreateOrder(call.function.arguments, context);
+      } else if (call.function.name === "paypal_get_order_status") {
+        result = await runPayPalGetOrderStatus(call.function.arguments);
       } else {
         result = { error: "Unknown tool" };
       }

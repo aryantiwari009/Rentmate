@@ -16,6 +16,7 @@ import authRoutes from "./routes/authRoutes.js";
 import bookingRoutes from "./routes/bookingRoutes.js";
 import assistantRoutes from "./routes/assistantRoutes.js";
 import paymentRoutes from "./routes/paymentRoutes.js";
+import paypalRoutes from "./routes/paypalRoutes.js";
 
 const app = express();
 
@@ -40,6 +41,8 @@ app.use("/api/bookings", bookingRoutes);
 app.use("/api/assistant", assistantRoutes);
 // payment routes live under /api/payments
 app.use("/api/payments", paymentRoutes);
+// paypal webhook and endpoints live under /api/paypal
+app.use("/api/paypal", paypalRoutes);
 
 // Catch-all 404 for unknown API routes (always returns JSON, never index.html)
 app.use("/api", (req, res) => {

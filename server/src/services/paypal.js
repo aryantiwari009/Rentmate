@@ -147,3 +147,185 @@ export async function refundCapture(captureId, note) {
   const refundData = await response.json();
   return refundData;
 }
+
+export async function createInvoice({ booking, recipientEmail, recipientName, note }) {
+  const token = await getAccessToken();
+  const { apiBase } = getCredentials();
+  const inrPerUsd = Number(process.env.INR_PER_USD) || 85;
+  const currency = process.env.PAYPAL_CURRENCY || "USD";
+
+  const rentTotal = ((booking.monthlyRent * booking.months) / inrPerUsd).toFixed(2);
+  const depositTotal = (booking.deposit / inrPerUsd).toFixed(2);
+
+  const invoicePayload = {
+    detail: {
+      invoice_number: `INV-${booking._id.toString().slice(-6)}-${Date.now().toString().slice(-4)}`,
+      invoice_date: new Date().toISOString().slice(0, 10),
+      currency_code: currency,
+      note: note || `RentMate Rental Booking #${booking._id}`,
+      term: "DUE_ON_RECEIPT",
+    },
+    invoicer: {
+      name: {
+        given_name: "RentMate",
+        surname: "Rentals",
+      },
+    },
+    primary_recipients: [
+      {
+        billing_info: {
+          name: {
+            given_name: recipientName || "Valued Renter",
+          },
+          email_address: recipientEmail,
+        },
+      },
+    ],
+    items: [
+      {
+        name: `Rental: ${booking.product?.name || "Item"} (${booking.months} month${booking.months > 1 ? "s" : ""})`,
+        quantity: "1",
+        unit_amount: {
+          currency_code: currency,
+          value: rentTotal,
+        },
+      },
+      {
+        name: "Security Deposit (Refundable upon return)",
+        quantity: "1",
+        unit_amount: {
+          currency_code: currency,
+          value: depositTotal,
+        },
+      },
+    ],
+    configuration: {
+      allow_tip: false,
+      tax_calculated_after_discount: false,
+      tax_inclusive: false,
+    },
+  };
+
+  const response = await fetch(`${apiBase}/v2/invoicing/invoices`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(invoicePayload),
+  });
+
+  if (!response.ok) {
+    const errData = await response.json().catch(() => null);
+    console.error(`PayPal createInvoice error: HTTP ${response.status}`, errData);
+    throw new Error(errData?.message || "Failed to create PayPal invoice");
+  }
+
+  const invoiceData = await response.json();
+  const invoiceId = invoiceData.id || invoiceData.href?.split("/").pop();
+  return { ...invoiceData, id: invoiceId };
+}
+
+export async function sendInvoice(invoiceId) {
+  const token = await getAccessToken();
+  const { apiBase } = getCredentials();
+
+  const response = await fetch(`${apiBase}/v2/invoicing/invoices/${encodeURIComponent(invoiceId)}/send`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      send_to_invoicer: true,
+      send_to_recipient: true,
+    }),
+  });
+
+  if (!response.ok) {
+    const errData = await response.json().catch(() => null);
+    console.error(`PayPal sendInvoice error: HTTP ${response.status}`, errData);
+    throw new Error(errData?.message || "Failed to send PayPal invoice");
+  }
+
+  return response.json().catch(() => ({ sent: true }));
+}
+
+export async function getInvoice(invoiceId) {
+  const token = await getAccessToken();
+  const { apiBase } = getCredentials();
+
+  const response = await fetch(`${apiBase}/v2/invoicing/invoices/${encodeURIComponent(invoiceId)}`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+  });
+
+  if (!response.ok) {
+    console.error(`PayPal getInvoice error: HTTP ${response.status}`);
+    return null;
+  }
+
+  return response.json();
+}
+
+export async function verifyWebhookSignature({ headers, body }) {
+  const webhookId = process.env.PAYPAL_WEBHOOK_ID;
+  if (!webhookId) {
+    console.error("PAYPAL_WEBHOOK_ID environment variable is missing");
+    return { verified: false, error: "PAYPAL_WEBHOOK_ID is not configured" };
+  }
+
+  // Headers in Express are lowercased
+  const transmissionId =
+    headers["paypal-transmission-id"] || headers["PAYPAL-TRANSMISSION-ID"];
+  const transmissionTime =
+    headers["paypal-transmission-time"] || headers["PAYPAL-TRANSMISSION-TIME"];
+  const certUrl =
+    headers["paypal-cert-url"] || headers["PAYPAL-CERT-URL"];
+  const authAlgo =
+    headers["paypal-auth-algo"] || headers["PAYPAL-AUTH-ALGO"];
+  const transmissionSig =
+    headers["paypal-transmission-sig"] || headers["PAYPAL-TRANSMISSION-SIG"];
+
+  if (!transmissionId || !transmissionTime || !certUrl || !authAlgo || !transmissionSig) {
+    console.error("Missing required PayPal signature headers in webhook request");
+    return { verified: false, error: "Missing required PayPal signature headers" };
+  }
+
+  const token = await getAccessToken();
+  const { apiBase } = getCredentials();
+
+  const verificationPayload = {
+    transmission_id: transmissionId,
+    transmission_time: transmissionTime,
+    cert_url: certUrl,
+    auth_algo: authAlgo,
+    transmission_sig: transmissionSig,
+    webhook_id: webhookId,
+    webhook_event: body,
+  };
+
+  const response = await fetch(`${apiBase}/v1/notifications/verify-webhook-signature`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(verificationPayload),
+  });
+
+  if (!response.ok) {
+    const errText = await response.text().catch(() => "");
+    console.error(`PayPal verify-webhook-signature error: HTTP ${response.status} - ${errText}`);
+    return { verified: false, error: `Verification API returned HTTP ${response.status}` };
+  }
+
+  const result = await response.json();
+  const isSuccess = result?.verification_status === "SUCCESS";
+  return {
+    verified: isSuccess,
+    status: result?.verification_status,
+  };
+}

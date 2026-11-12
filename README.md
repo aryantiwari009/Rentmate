@@ -69,15 +69,24 @@ Add the following to `server/.env`:
 ```env
 PAYPAL_CLIENT_ID=your-sandbox-client-id
 PAYPAL_CLIENT_SECRET=your-sandbox-secret
+PAYPAL_WEBHOOK_ID=your-paypal-webhook-id
 PAYPAL_API=https://api-m.sandbox.paypal.com
 PAYPAL_CURRENCY=USD
 INR_PER_USD=85
 ```
 - `INR_PER_USD`: Fixed conversion rate (e.g. 85) used as a demo rate to convert INR rental totals into USD for PayPal Sandbox checkout. The charged amount is always computed on the server from `booking.total / INR_PER_USD`.
+- `PAYPAL_WEBHOOK_ID`: The Webhook ID from PayPal Developer Dashboard for `https://<your-domain>/api/paypal/webhook`.
+
+### PayPal Webhook Integration
+RentMate provides a verified PayPal webhook listener at `POST /api/paypal/webhook`:
+- Verifies incoming event signatures via PayPal's official verification API (`/v1/notifications/verify-webhook-signature`).
+- Handles invoice events (`CREATED`, `SENT`, `PAID`, `CANCELLED`, `UPDATED`).
+- Handles payment capture events (`COMPLETED`, `PENDING`, `DENIED`).
+- Prevents duplicate event processing using an indexed `WebhookEvent` collection.
+- Updates corresponding MongoDB `Booking` and `Invoice` records.
 
 ### Known limitations
 - **No automatic refunds:** Cancelling a paid booking is permitted by the system, but does not initiate an automatic refund via PayPal. Any refunds must be handled manually out-of-band.
-- **No webhooks:** Payment status updates are captured and confirmed synchronously upon buyer approval via the PayPal Orders v2 capture endpoint.
 - **Sandbox only:** PayPal transactions run in sandbox mode for demo and testing.
 - **Booking date release:** A pending booking older than 30 minutes stops blocking dates for other users.
 
@@ -101,6 +110,7 @@ Configure the following environment variables in the Render dashboard:
 - `NODE_ENV`
 - `PAYPAL_CLIENT_ID`
 - `PAYPAL_CLIENT_SECRET`
+- `PAYPAL_WEBHOOK_ID`
 - `PAYPAL_API`
 - `PAYPAL_CURRENCY`
 - `INR_PER_USD`

@@ -8,6 +8,8 @@ import {
   X,
   AlertTriangle,
   CheckCircle2,
+  FileText,
+  ExternalLink,
 } from "lucide-react";
 import { api } from "../utils/api.js";
 import { useAuth } from "../context/AuthContext.jsx";
@@ -23,6 +25,8 @@ function Rentals() {
   const [cancelTarget, setCancelTarget] = useState(null);
   const [cancelling, setCancelling] = useState(false);
   const [cancelError, setCancelError] = useState(null);
+  const [generatingInvoice, setGeneratingInvoice] = useState({});
+  const [invoiceError, setInvoiceError] = useState({});
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -68,6 +72,25 @@ function Rentals() {
       setCancelError(err.message || "Failed to cancel booking");
     } finally {
       setCancelling(false);
+    }
+  }
+
+  async function handleGenerateInvoice(bookingId) {
+    setGeneratingInvoice((prev) => ({ ...prev, [bookingId]: true }));
+    setInvoiceError((prev) => ({ ...prev, [bookingId]: null }));
+    try {
+      const res = await api.post("/payments/create-invoice", { bookingId });
+      if (res.invoiceUrl) {
+        window.open(res.invoiceUrl, "_blank", "noopener,noreferrer");
+      }
+      await loadBookings();
+    } catch (err) {
+      setInvoiceError((prev) => ({
+        ...prev,
+        [bookingId]: err.message || "Failed to generate PayPal invoice",
+      }));
+    } finally {
+      setGeneratingInvoice((prev) => ({ ...prev, [bookingId]: false }));
     }
   }
 
@@ -201,6 +224,96 @@ function Rentals() {
                   {booking.status === "active" && booking.paymentStatus === "pending" && (
                     <div style={{ marginTop: "var(--s-3)", marginBottom: "var(--s-2)" }}>
                       <PayButton booking={booking} onSuccess={loadBookings} />
+                    </div>
+                  )}
+
+                  {booking.paypalInvoiceUrl ? (
+                    <div style={{ marginTop: "var(--s-2)", marginBottom: "var(--s-2)" }}>
+                      <a
+                        href={booking.paypalInvoiceUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="btn btn-secondary btn-sm"
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "5px",
+                          fontSize: "0.75rem",
+                          padding: "4px 10px",
+                        }}
+                      >
+                        <FileText size={14} aria-hidden="true" />
+                        <span>View PayPal Invoice</span>
+                        <ExternalLink size={12} aria-hidden="true" />
+                      </a>
+                    </div>
+                  ) : (
+                    booking.status === "active" && (
+                      <div style={{ marginTop: "var(--s-2)", marginBottom: "var(--s-2)" }}>
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-sm"
+                          disabled={generatingInvoice[booking._id]}
+                          onClick={() => handleGenerateInvoice(booking._id)}
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: "5px",
+                            fontSize: "0.75rem",
+                            padding: "4px 10px",
+                          }}
+                        >
+                          <FileText size={14} aria-hidden="true" />
+                          <span>
+                            {generatingInvoice[booking._id]
+                              ? "Creating Invoice..."
+                              : "Request PayPal Invoice"}
+                          </span>
+                        </button>
+                      </div>
+                    )
+                  )}
+
+                  {invoiceError[booking._id] && (
+                    <div
+                      className="alert alert-error"
+                      role="alert"
+                      style={{
+                        marginTop: "var(--s-2)",
+                        marginBottom: "var(--s-2)",
+                        fontSize: "0.8125rem",
+                        padding: "var(--s-2) var(--s-3)",
+                        display: "flex",
+                        alignItems: "flex-start",
+                        justifyContent: "space-between",
+                        gap: "8px",
+                        lineHeight: 1.4,
+                      }}
+                    >
+                      <div>
+                        <strong style={{ display: "block", marginBottom: "2px" }}>
+                          PayPal Invoicing:
+                        </strong>
+                        <span>{invoiceError[booking._id]}</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setInvoiceError((prev) => ({ ...prev, [booking._id]: null }))
+                        }
+                        style={{
+                          background: "transparent",
+                          border: "none",
+                          cursor: "pointer",
+                          padding: "2px",
+                          color: "inherit",
+                          opacity: 0.7,
+                          flexShrink: 0,
+                        }}
+                        aria-label="Dismiss error"
+                      >
+                        <X size={14} aria-hidden="true" />
+                      </button>
                     </div>
                   )}
 
