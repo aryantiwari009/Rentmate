@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "node --watch src/server.js",
     "start": "node src/server.js",
-    "seed": "node src/seed/seedProducts.js"
+    "seed": "node src/seed/seedProducts.js",
+    "test:mcp": "node test_mcp.js"
   },
   "engines": {
     "node": ">=20.0.0"
@@ -16,6 +17,8 @@
   "license": "ISC",
   "type": "module",
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "@paypal/mcp": "^1.8.1",
     "bcryptjs": "^3.0.3",
     "cookie-parser": "^1.4.7",
     "dotenv": "^18.0.9",

@@ -11,16 +11,21 @@ import {
   getInvoice as paypalGetInvoice,
 } from "./paypal.js";
 import { calculateBookingBreakdown } from "../utils/currency.js";
+import {
+  listPayPalMcpTools,
+  callPayPalMcpTool,
+  mcpToolToOpenAiFunction,
+} from "./paypalMcpService.js";
 
 const SYSTEM_PROMPT =
-  "You are RentMate's official PayPal AI rental assistant. You help people find items to rent by the month, check pricing and availability, prepare bookings, and manage PayPal checkout orders and invoices. " +
-  "Use search_products to find real items, and only recommend items it returns. " +
-  "When the user has chosen an item, a start date and a number of months, call propose_booking. " +
-  "When propose_booking returns a proposal, do NOT repeat the line-item numbers, deposit, or total calculation in your text, and never write fake brackets or buttons like '[Confirm Booking]' because the application renders a dedicated interactive card with the full breakdown and a Confirm button directly below your message. Simply invite the user to review the proposal card and confirm. " +
-  "When the user asks to pay with PayPal, generate an invoice, or check payment status, use the corresponding PayPal tools. " +
-  "You never confirm or create bookings yourself: the user confirms with a button. " +
-  "Never work out prices yourself. Quote only the numbers that tools return. " +
-  "Prices are in rupees. Answer in concise, natural, friendly text without raw markdown symbols or fake buttons.";
+  "You are RentMate's official PayPal AI rental assistant, equipped with the official PayPal MCP Server. " +
+  "You help users search items to rent by the month, check pricing and availability, prepare bookings, and manage real PayPal invoices, payments, and orders. " +
+  "Use search_products to find real items in the catalog. " +
+  "When the user has chosen an item, a start date and months, call propose_booking to check real price and prepare a proposal card. " +
+  "You can use official PayPal MCP tools (such as mcp_list_invoices, mcp_get_invoice, mcp_create_invoice, mcp_create_order, mcp_get_order) to inspect or manage PayPal transactions. " +
+  "Always confirm pricing and booking details with the user before initiating any new invoice or order creation. " +
+  "Prices are in Indian Rupees (INR) for rental displays and converted to USD for PayPal sandbox transactions. " +
+  "Answer in concise, natural, helpful text without raw markdown symbols or fake buttons.";
 
 const tools = [
   {
@@ -119,14 +124,14 @@ const tools = [
   },
 ];
 
-async function askModel(messages) {
+async function askModel(messages, activeTools = tools) {
   const response = await fetch(`${process.env.AI_BASE_URL}chat/completions`, {
     method: "POST",
     headers: {
       Authorization: "Bearer " + process.env.AI_API_KEY,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ model: process.env.AI_MODEL, messages, tools }),
+    body: JSON.stringify({ model: process.env.AI_MODEL, messages, tools: activeTools }),
   });
   const data = await response.json();
   if (!response.ok) throw new Error(data.error?.message ?? "AI request failed");
@@ -358,13 +363,91 @@ async function runPayPalGetOrderStatus(rawArguments) {
   };
 }
 
+function formatMcpResult(toolName, result) {
+  if (!result) return { ok: false, reason: "No data returned from PayPal MCP" };
+  if (result.error) return result;
+
+  // Format list_invoices cleanly to minimize token consumption
+  if (toolName === "list_invoices" && Array.isArray(result.items)) {
+    return {
+      total: result.total_count || result.items.length,
+      invoices: result.items.slice(0, 5).map((inv) => ({
+        id: inv.id,
+        invoiceNumber: inv.detail?.invoice_number,
+        status: inv.status,
+        amount: inv.amount?.value,
+        dueAmount: inv.due_amount?.value,
+        currency: inv.amount?.currency_code,
+        recipient: inv.primary_recipients?.[0]?.billing_info?.email_address,
+      })),
+    };
+  }
+
+  // Format get_invoice cleanly
+  if (toolName === "get_invoice" && result.id) {
+    return {
+      id: result.id,
+      invoiceNumber: result.detail?.invoice_number,
+      status: result.status,
+      amount: result.amount?.value,
+      dueAmount: result.due_amount?.value,
+      currency: result.amount?.currency_code,
+      note: result.detail?.note,
+      invoiceDate: result.detail?.invoice_date,
+      viewUrl: result.detail?.metadata?.payer_view_url,
+      recipient: result.primary_recipients?.[0]?.billing_info?.email_address,
+    };
+  }
+
+  // Format get_order cleanly
+  if (toolName === "get_order" && result.id) {
+    return {
+      id: result.id,
+      status: result.status,
+      intent: result.intent,
+      amount: result.purchase_units?.[0]?.amount?.value,
+      currency: result.purchase_units?.[0]?.amount?.currency_code,
+    };
+  }
+
+  return result;
+}
+
 // userMessages: already validated list of { role: "user" | "assistant", content }
 export async function runAssistant(userMessages, context = {}) {
   const messages = [{ role: "system", content: SYSTEM_PROMPT }, ...userMessages];
   const proposals = [];
 
+  let activeTools = [...tools];
+  let mcpTools = [];
+
+  try {
+    const rawMcpTools = await listPayPalMcpTools();
+    if (rawMcpTools && rawMcpTools.length > 0) {
+      // Focus on essential commerce, invoice, and payment tools to stay well within Groq TPM limits
+      const allowedToolNames = new Set([
+        "get_invoice",
+        "list_invoices",
+        "send_invoice",
+        "get_order",
+        "create_order",
+        "create_refund",
+        "get_refund",
+      ]);
+
+      mcpTools = rawMcpTools.filter((t) => allowedToolNames.has(t.name));
+      const mcpFunctions = mcpTools.map(mcpToolToOpenAiFunction);
+      activeTools = [...tools, ...mcpFunctions];
+    }
+  } catch (mcpErr) {
+    console.warn(
+      "[Assistant] Warning: Unable to load MCP tools dynamically, continuing with base tools:",
+      mcpErr.message
+    );
+  }
+
   for (let round = 0; round < 4; round++) {
-    const reply = await askModel(messages);
+    const reply = await askModel(messages, activeTools);
 
     if (!reply.tool_calls?.length) {
       return { reply: reply.content ?? "", proposals };
@@ -372,22 +455,61 @@ export async function runAssistant(userMessages, context = {}) {
 
     messages.push(reply);
     for (const call of reply.tool_calls) {
+      const fnName = call.function.name;
       let result;
-      if (call.function.name === "search_products") {
-        result = await runSearchProducts(call.function.arguments);
-      } else if (call.function.name === "propose_booking") {
-        result = await runProposeBooking(call.function.arguments, proposals);
-      } else if (call.function.name === "paypal_create_invoice") {
-        result = await runPayPalCreateInvoice(call.function.arguments, context);
-      } else if (call.function.name === "paypal_get_invoice") {
-        result = await runPayPalGetInvoice(call.function.arguments);
-      } else if (call.function.name === "paypal_create_order") {
-        result = await runPayPalCreateOrder(call.function.arguments, context);
-      } else if (call.function.name === "paypal_get_order_status") {
-        result = await runPayPalGetOrderStatus(call.function.arguments);
-      } else {
-        result = { error: "Unknown tool" };
+
+      // 1. Check if tool is an official PayPal MCP tool (prefixed with mcp_)
+      if (fnName.startsWith("mcp_")) {
+        const rawMcpName = fnName.slice(4);
+        let parsedArgs = {};
+        try {
+          parsedArgs = JSON.parse(call.function.arguments || "{}");
+        } catch {
+          parsedArgs = {};
+        }
+
+        try {
+          console.log(`[Assistant] Invoking official PayPal MCP tool: ${rawMcpName}`, parsedArgs);
+          const rawResult = await callPayPalMcpTool(rawMcpName, parsedArgs);
+          result = formatMcpResult(rawMcpName, rawResult);
+        } catch (mcpCallErr) {
+          console.error(`[Assistant] PayPal MCP tool execution error for ${rawMcpName}:`, mcpCallErr.message);
+          result = { error: `PayPal MCP tool error: ${mcpCallErr.message}` };
+        }
       }
+      // 2. Base RentMate catalog & pricing tools
+      else if (fnName === "search_products") {
+        result = await runSearchProducts(call.function.arguments);
+      } else if (fnName === "propose_booking") {
+        result = await runProposeBooking(call.function.arguments, proposals);
+      }
+      // 3. Fallback direct PayPal tools
+      else if (fnName === "paypal_create_invoice") {
+        result = await runPayPalCreateInvoice(call.function.arguments, context);
+      } else if (fnName === "paypal_get_invoice") {
+        result = await runPayPalGetInvoice(call.function.arguments);
+      } else if (fnName === "paypal_create_order") {
+        result = await runPayPalCreateOrder(call.function.arguments, context);
+      } else if (fnName === "paypal_get_order_status") {
+        result = await runPayPalGetOrderStatus(call.function.arguments);
+      }
+      // 4. Raw MCP tool name without mcp_ prefix
+      else {
+        const isRawMcp = mcpTools.some((t) => t.name === fnName);
+        if (isRawMcp) {
+          try {
+            const parsedArgs = JSON.parse(call.function.arguments || "{}");
+            console.log(`[Assistant] Invoking raw PayPal MCP tool: ${fnName}`, parsedArgs);
+            const rawResult = await callPayPalMcpTool(fnName, parsedArgs);
+            result = formatMcpResult(fnName, rawResult);
+          } catch (rawErr) {
+            result = { error: `PayPal MCP tool error: ${rawErr.message}` };
+          }
+        } else {
+          result = { error: "Unknown tool" };
+        }
+      }
+
       messages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(result) });
     }
   }
