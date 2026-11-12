@@ -52,6 +52,18 @@ const invoiceSchema = new mongoose.Schema(
       default: "USD",
       trim: true,
     },
+    originalAmount: {
+      type: Number,
+      min: 0,
+    },
+    originalCurrency: {
+      type: String,
+      default: "INR",
+      trim: true,
+    },
+    exchangeRate: {
+      type: Number,
+    },
     invoiceUrl: {
       type: String,
       trim: true,

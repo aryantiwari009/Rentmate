@@ -1,6 +1,8 @@
 let cachedToken = null;
 let tokenExpiresAt = 0;
 
+import { calculateBookingBreakdown } from "../utils/currency.js";
+
 function getCredentials() {
   const clientId = process.env.PAYPAL_CLIENT_ID;
   const clientSecret = process.env.PAYPAL_CLIENT_SECRET;
@@ -151,18 +153,22 @@ export async function refundCapture(captureId, note) {
 export async function createInvoice({ booking, recipientEmail, recipientName, note }) {
   const token = await getAccessToken();
   const { apiBase } = getCredentials();
-  const inrPerUsd = Number(process.env.INR_PER_USD) || 85;
-  const currency = process.env.PAYPAL_CURRENCY || "USD";
 
-  const rentTotal = ((booking.monthlyRent * booking.months) / inrPerUsd).toFixed(2);
-  const depositTotal = (booking.deposit / inrPerUsd).toFixed(2);
+  const breakdown = calculateBookingBreakdown(booking);
+  const currency = breakdown.currency;
+  const rentTotal = breakdown.rentTarget.toFixed(2);
+  const depositTotal = breakdown.depositTarget.toFixed(2);
 
   const invoicePayload = {
     detail: {
       invoice_number: `INV-${booking._id.toString().slice(-6)}-${Date.now().toString().slice(-4)}`,
       invoice_date: new Date().toISOString().slice(0, 10),
       currency_code: currency,
-      note: note || `RentMate Rental Booking #${booking._id}`,
+      note:
+        note ||
+        `RentMate Rental Booking #${booking._id} | Original: ₹${breakdown.totalInr.toLocaleString(
+          "en-IN"
+        )} INR | Conversion Rate: 1 ${currency} = ₹${breakdown.conversionRate}`,
       term: "DUE_ON_RECEIPT",
     },
     invoicer: {
@@ -183,7 +189,12 @@ export async function createInvoice({ booking, recipientEmail, recipientName, no
     ],
     items: [
       {
-        name: `Rental: ${booking.product?.name || "Item"} (${booking.months} month${booking.months > 1 ? "s" : ""})`,
+        name: `Rental: ${booking.product?.name || "Item"} (${booking.months} month${
+          booking.months > 1 ? "s" : ""
+        })`,
+        description: `₹${breakdown.rentInr.toLocaleString(
+          "en-IN"
+        )} INR converted at 1 ${currency} = ₹${breakdown.conversionRate}`,
         quantity: "1",
         unit_amount: {
           currency_code: currency,
@@ -192,6 +203,9 @@ export async function createInvoice({ booking, recipientEmail, recipientName, no
       },
       {
         name: "Security Deposit (Refundable upon return)",
+        description: `₹${breakdown.depositInr.toLocaleString(
+          "en-IN"
+        )} INR converted at 1 ${currency} = ₹${breakdown.conversionRate}`,
         quantity: "1",
         unit_amount: {
           currency_code: currency,

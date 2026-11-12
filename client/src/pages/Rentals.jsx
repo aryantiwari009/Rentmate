@@ -239,7 +239,25 @@ function Rentals() {
                     </div>
                     <div>
                       <dt>Total</dt>
-                      <dd>{money(booking.total)}</dd>
+                      <dd>
+                        {money(booking.total)}
+                        <span
+                          style={{
+                            fontSize: "0.75rem",
+                            opacity: 0.7,
+                            fontWeight: "normal",
+                            display: "block",
+                          }}
+                        >
+                          ≈ $
+                          {(
+                            booking.chargedAmount ||
+                            booking.paypalInvoiceAmount ||
+                            booking.total / 85
+                          ).toFixed(2)}{" "}
+                          USD
+                        </span>
+                      </dd>
                     </div>
                   </dl>
 
@@ -599,8 +617,25 @@ function Rentals() {
                   <strong>{historyModal.booking?.product?.name || "Rental"}</strong>
                 </div>
                 <div>
-                  <div style={{ opacity: 0.7, fontSize: "0.75rem" }}>Total</div>
+                  <div style={{ opacity: 0.7, fontSize: "0.75rem" }}>Total (INR)</div>
                   <strong>{money(historyModal.booking?.total)}</strong>
+                </div>
+                <div>
+                  <div style={{ opacity: 0.7, fontSize: "0.75rem" }}>PayPal Converted Amount</div>
+                  <strong>
+                    $
+                    {(
+                      historyModal.data?.chargedAmount ||
+                      historyModal.data?.invoiceAmount ||
+                      historyModal.booking?.total / 85
+                    ).toFixed(2)}{" "}
+                    {historyModal.data?.chargedCurrency ||
+                      historyModal.data?.invoiceCurrency ||
+                      "USD"}{" "}
+                    <span style={{ fontSize: "0.75rem", opacity: 0.75, fontWeight: "normal" }}>
+                      (@ ₹{historyModal.data?.exchangeRate || 85}/USD)
+                    </span>
+                  </strong>
                 </div>
                 <div>
                   <div style={{ opacity: 0.7, fontSize: "0.75rem" }}>Payment Status</div>

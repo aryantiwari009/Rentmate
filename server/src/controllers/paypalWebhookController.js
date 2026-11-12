@@ -3,6 +3,7 @@ import { Booking } from "../models/Booking.js";
 import { Invoice } from "../models/Invoice.js";
 import { WebhookEvent } from "../models/WebhookEvent.js";
 import { verifyWebhookSignature, recordInvoicePayment } from "../services/paypal.js";
+import { calculateBookingBreakdown } from "../utils/currency.js";
 
 const STATUS_RANKS = {
   DRAFT: 1,
@@ -325,21 +326,32 @@ export async function handlePayPalWebhook(req, res) {
 
             if (booking.paypalInvoiceId && booking.paypalInvoiceStatus !== "PAID") {
               try {
-                const inrPerUsd = Number(process.env.INR_PER_USD) || 85;
-                const usdAmount = Number((booking.total / inrPerUsd).toFixed(2));
+                const breakdown = calculateBookingBreakdown(
+                  booking,
+                  booking.exchangeRate,
+                  booking.chargedCurrency
+                );
+                const usdAmount = breakdown.totalTarget;
                 await recordInvoicePayment(booking.paypalInvoiceId, {
                   amount: usdAmount,
-                  currency: process.env.PAYPAL_CURRENCY || "USD",
+                  currency: breakdown.currency,
                   paymentDate: booking.paidAt,
                   note: `Paid via PayPal Checkout (Capture ID: ${captureId})`,
                   method: "PAYPAL",
                   paymentId: captureId,
                 });
                 booking.paypalInvoiceStatus = "PAID";
+                booking.paypalInvoiceAmount = usdAmount;
+                booking.paypalInvoiceCurrency = breakdown.currency;
                 await Invoice.updateOne(
                   { invoiceId: booking.paypalInvoiceId },
                   {
-                    $set: { status: "PAID", paidAt: booking.paidAt },
+                    $set: {
+                      status: "PAID",
+                      paidAt: booking.paidAt,
+                      amount: usdAmount,
+                      currency: breakdown.currency,
+                    },
                     $push: {
                       eventHistory: {
                         eventType: "PAYMENT.CAPTURE.COMPLETED",

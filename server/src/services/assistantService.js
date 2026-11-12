@@ -10,6 +10,7 @@ import {
   sendInvoice as paypalSendInvoice,
   getInvoice as paypalGetInvoice,
 } from "./paypal.js";
+import { calculateBookingBreakdown } from "../utils/currency.js";
 
 const SYSTEM_PROMPT =
   "You are RentMate's official PayPal AI rental assistant. You help people find items to rent by the month, check pricing and availability, prepare bookings, and manage PayPal checkout orders and invoices. " +
@@ -308,9 +309,9 @@ async function runPayPalCreateOrder(rawArguments, context) {
     return { ok: false, reason: "Booking not found" };
   }
 
-  const inrPerUsd = Number(process.env.INR_PER_USD) || 85;
-  const currency = process.env.PAYPAL_CURRENCY || "USD";
-  const amount = (booking.total / inrPerUsd).toFixed(2);
+  const breakdown = calculateBookingBreakdown(booking);
+  const amount = breakdown.totalTarget.toFixed(2);
+  const currency = breakdown.currency;
 
   try {
     const order = await paypalCreateOrder({
@@ -321,12 +322,18 @@ async function runPayPalCreateOrder(rawArguments, context) {
     });
 
     booking.paypalOrderId = order.id;
+    booking.exchangeRate = breakdown.conversionRate;
+    booking.chargedAmount = breakdown.totalTarget;
+    booking.chargedCurrency = currency;
     await booking.save();
 
     return {
       ok: true,
       orderId: order.id,
       status: order.status,
+      amount,
+      currency,
+      exchangeRate: breakdown.conversionRate,
     };
   } catch (err) {
     return { ok: false, reason: err.message || "Failed to create PayPal order" };

@@ -310,7 +310,7 @@ function PayButton({ booking, onSuccess }) {
             lineHeight: 1.4,
           }}
         >
-          Sandbox demo: charged in USD at a fixed rate of INR {config.inrPerUsd} per USD
+          Charged as <strong>${(booking?.total / (booking?.exchangeRate || config.inrPerUsd)).toFixed(2)} {config.currency || "USD"}</strong> (1 {config.currency || "USD"} = ₹{booking?.exchangeRate || config.inrPerUsd})
         </p>
       )}
 

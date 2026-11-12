@@ -11,19 +11,20 @@ import {
   getInvoice as paypalGetInvoice,
   recordInvoicePayment,
 } from "../services/paypal.js";
+import { calculateBookingBreakdown, getCurrencyConfig } from "../utils/currency.js";
 
 export function getConfig(req, res) {
   const clientId = process.env.PAYPAL_CLIENT_ID;
   if (!clientId) {
     return res.status(500).json({ message: "PayPal is not configured: PAYPAL_CLIENT_ID is missing" });
   }
-  const currency = process.env.PAYPAL_CURRENCY || "USD";
-  const inrPerUsd = Number(process.env.INR_PER_USD) || 85;
+  const { inrPerUsd, currency } = getCurrencyConfig();
 
   return res.json({
     clientId,
     currency,
     inrPerUsd,
+    baseCurrency: "INR",
   });
 }
 
@@ -49,10 +50,10 @@ export async function createOrder(req, res) {
     return res.status(409).json({ message: "Booking is not eligible for payment" });
   }
 
-  // Amount is ALWAYS computed on the server from booking.total in the database divided by INR_PER_USD
-  const inrPerUsd = Number(process.env.INR_PER_USD) || 85;
-  const currency = process.env.PAYPAL_CURRENCY || "USD";
-  const amount = (booking.total / inrPerUsd).toFixed(2);
+  // Compute breakdown and lock conversion values on booking
+  const breakdown = calculateBookingBreakdown(booking);
+  const amount = breakdown.totalTarget.toFixed(2);
+  const currency = breakdown.currency;
 
   try {
     const order = await paypalCreateOrder({
@@ -63,9 +64,19 @@ export async function createOrder(req, res) {
     });
 
     booking.paypalOrderId = order.id;
+    booking.exchangeRate = breakdown.conversionRate;
+    booking.chargedAmount = breakdown.totalTarget;
+    booking.chargedCurrency = currency;
     await booking.save();
 
-    return res.json({ orderId: order.id });
+    return res.json({
+      orderId: order.id,
+      amount,
+      currency,
+      exchangeRate: breakdown.conversionRate,
+      originalAmount: booking.total,
+      originalCurrency: booking.currency || "INR",
+    });
   } catch (err) {
     console.error(`create-order failed for booking ${booking._id}: ${err.message}`);
     return res.status(500).json({ message: err.message || "Failed to create payment order" });
@@ -98,9 +109,17 @@ export async function capture(req, res) {
     return res.status(409).json({ message: "Only active bookings can be paid" });
   }
 
-  const inrPerUsd = Number(process.env.INR_PER_USD) || 85;
-  const expectedCurrency = process.env.PAYPAL_CURRENCY || "USD";
-  const expectedAmount = (booking.total / inrPerUsd).toFixed(2);
+  const breakdown = calculateBookingBreakdown(
+    booking,
+    booking.exchangeRate,
+    booking.chargedCurrency
+  );
+  const expectedAmount = (
+    booking.chargedAmount !== undefined && booking.chargedAmount !== null
+      ? booking.chargedAmount
+      : breakdown.totalTarget
+  ).toFixed(2);
+  const expectedCurrency = booking.chargedCurrency || breakdown.currency;
 
   let captureData;
   try {
@@ -218,9 +237,13 @@ export async function createInvoiceEndpoint(req, res) {
     return res.status(409).json({ message: "Invoices can only be created for active bookings" });
   }
 
-  const inrPerUsd = Number(process.env.INR_PER_USD) || 85;
-  const usdAmount = Number((booking.total / inrPerUsd).toFixed(2));
-  const currency = process.env.PAYPAL_CURRENCY || "USD";
+  const breakdown = calculateBookingBreakdown(
+    booking,
+    booking.exchangeRate,
+    booking.chargedCurrency
+  );
+  const targetAmount = breakdown.totalTarget;
+  const currency = breakdown.currency;
   const isAlreadyPaid = booking.paymentStatus === "paid";
 
   // If already generated
@@ -230,7 +253,7 @@ export async function createInvoiceEndpoint(req, res) {
     if (isAlreadyPaid) {
       try {
         await recordInvoicePayment(booking.paypalInvoiceId, {
-          amount: usdAmount,
+          amount: targetAmount,
           currency,
           paymentDate: booking.paidAt || new Date(),
           note: `Paid via PayPal Checkout (Capture ID: ${booking.paypalCaptureId || "captured"})`,
@@ -238,6 +261,8 @@ export async function createInvoiceEndpoint(req, res) {
           paymentId: booking.paypalCaptureId,
         });
         booking.paypalInvoiceStatus = "PAID";
+        booking.paypalInvoiceAmount = targetAmount;
+        booking.paypalInvoiceCurrency = currency;
 
         const detailedPaid = await paypalGetInvoice(booking.paypalInvoiceId);
         if (detailedPaid) {
@@ -252,6 +277,11 @@ export async function createInvoiceEndpoint(req, res) {
             $set: {
               status: "PAID",
               paidAt: booking.paidAt || new Date(),
+              amount: targetAmount,
+              currency,
+              originalAmount: booking.total,
+              originalCurrency: booking.currency || "INR",
+              exchangeRate: breakdown.conversionRate,
               invoiceUrl: freshInvoiceUrl,
             },
             $push: {
@@ -272,6 +302,9 @@ export async function createInvoiceEndpoint(req, res) {
       invoiceId: booking.paypalInvoiceId,
       invoiceUrl: freshInvoiceUrl,
       status: booking.paypalInvoiceStatus || (isAlreadyPaid ? "PAID" : "SENT"),
+      amount: targetAmount,
+      currency,
+      exchangeRate: breakdown.conversionRate,
       alreadyCreated: true,
       isPaidReceipt: isAlreadyPaid,
     });
@@ -305,7 +338,7 @@ export async function createInvoiceEndpoint(req, res) {
     if (isAlreadyPaid) {
       try {
         await recordInvoicePayment(invoiceId, {
-          amount: usdAmount,
+          amount: targetAmount,
           currency,
           paymentDate: booking.paidAt || new Date(),
           note: `Paid via PayPal Checkout (Capture ID: ${booking.paypalCaptureId || "captured"})`,
@@ -326,6 +359,11 @@ export async function createInvoiceEndpoint(req, res) {
     booking.paypalInvoiceId = invoiceId;
     booking.paypalInvoiceUrl = invoiceUrl;
     booking.paypalInvoiceStatus = finalStatus;
+    booking.paypalInvoiceAmount = targetAmount;
+    booking.paypalInvoiceCurrency = currency;
+    booking.exchangeRate = booking.exchangeRate || breakdown.conversionRate;
+    booking.chargedAmount = booking.chargedAmount || targetAmount;
+    booking.chargedCurrency = booking.chargedCurrency || currency;
     await booking.save();
 
     await Invoice.findOneAndUpdate(
@@ -336,8 +374,11 @@ export async function createInvoiceEndpoint(req, res) {
           booking: booking._id,
           user: req.user._id,
           status: finalStatus,
-          amount: usdAmount,
+          amount: targetAmount,
           currency,
+          originalAmount: booking.total,
+          originalCurrency: booking.currency || "INR",
+          exchangeRate: breakdown.conversionRate,
           invoiceUrl,
           recipientEmail: req.user.email,
           recipientName: req.user.name,
@@ -363,6 +404,9 @@ export async function createInvoiceEndpoint(req, res) {
       invoiceId,
       invoiceUrl,
       status: finalStatus,
+      amount: targetAmount,
+      currency,
+      exchangeRate: breakdown.conversionRate,
       isPaidReceipt: finalStatus === "PAID",
     });
   } catch (err) {
@@ -393,17 +437,31 @@ export async function getInvoiceHistoryEndpoint(req, res) {
     return res.status(404).json({ message: "Booking not found" });
   }
 
+  const breakdown = calculateBookingBreakdown(
+    booking,
+    booking.exchangeRate,
+    booking.chargedCurrency
+  );
   const invoice = await Invoice.findOne({ booking: bookingId });
 
   return res.json({
     bookingId: booking._id,
     paymentStatus: booking.paymentStatus,
     paidAt: booking.paidAt,
+    originalAmount: booking.total,
+    originalCurrency: booking.currency || "INR",
+    exchangeRate: booking.exchangeRate || breakdown.conversionRate,
+    chargedAmount: booking.chargedAmount || breakdown.totalTarget,
+    chargedCurrency: booking.chargedCurrency || breakdown.currency,
     paypalOrderId: booking.paypalOrderId,
     paypalCaptureId: booking.paypalCaptureId,
     invoiceId: booking.paypalInvoiceId || invoice?.invoiceId,
     invoiceUrl: booking.paypalInvoiceUrl || invoice?.invoiceUrl,
     invoiceStatus: booking.paypalInvoiceStatus || invoice?.status,
+    invoiceAmount:
+      booking.paypalInvoiceAmount || invoice?.amount || breakdown.totalTarget,
+    invoiceCurrency:
+      booking.paypalInvoiceCurrency || invoice?.currency || breakdown.currency,
     events: invoice?.eventHistory || [],
   });
 }
@@ -434,13 +492,18 @@ export async function getInvoiceEndpoint(req, res) {
       return res.status(404).json({ message: "Invoice not found on PayPal" });
     }
 
+    const breakdown = calculateBookingBreakdown(
+      booking,
+      booking.exchangeRate,
+      booking.chargedCurrency
+    );
+
     if (booking.paymentStatus === "paid" && invoice.status !== "PAID") {
       try {
-        const inrPerUsd = Number(process.env.INR_PER_USD) || 85;
-        const usdAmount = Number((booking.total / inrPerUsd).toFixed(2));
+        const usdAmount = breakdown.totalTarget;
         await recordInvoicePayment(booking.paypalInvoiceId, {
           amount: usdAmount,
-          currency: process.env.PAYPAL_CURRENCY || "USD",
+          currency: breakdown.currency,
           paymentDate: booking.paidAt || new Date(),
           note: `Paid via PayPal Checkout (Capture ID: ${booking.paypalCaptureId || "captured"})`,
           method: "PAYPAL",
@@ -448,10 +511,19 @@ export async function getInvoiceEndpoint(req, res) {
         });
         invoice = await paypalGetInvoice(booking.paypalInvoiceId);
         booking.paypalInvoiceStatus = "PAID";
+        booking.paypalInvoiceAmount = usdAmount;
+        booking.paypalInvoiceCurrency = breakdown.currency;
         await booking.save();
         await Invoice.updateOne(
           { invoiceId: booking.paypalInvoiceId },
-          { $set: { status: "PAID", paidAt: booking.paidAt || new Date() } }
+          {
+            $set: {
+              status: "PAID",
+              paidAt: booking.paidAt || new Date(),
+              amount: usdAmount,
+              currency: breakdown.currency,
+            },
+          }
         );
       } catch (syncErr) {
         console.warn(`Sync payment on getInvoice failed: ${syncErr.message}`);
