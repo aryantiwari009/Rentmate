@@ -75,9 +75,37 @@ INR_PER_USD=85
 ```
 - `INR_PER_USD`: Fixed conversion rate (e.g. 85) used as a demo rate to convert INR rental totals into USD for PayPal Sandbox checkout. The charged amount is always computed on the server from `booking.total / INR_PER_USD`.
 
-### Automatic Refunds
-- Cancelling a paid booking automatically triggers a full refund of the captured funds through the PayPal Payments v2 Captures Refund API (`POST /v2/payments/captures/{capture_id}/refund`).
-- The booking payment status is automatically updated to `refunded`, and the reserved dates are freed up for future bookings.
-
 ### Known limitations
-- **No webhooks:** Payment status updates and captures are confirmed synchronously via the PayPal Orders v2 and Payments v2 endpoints.
+- **No automatic refunds:** Cancelling a paid booking is permitted by the system, but does not initiate an automatic refund via PayPal. Any refunds must be handled manually out-of-band.
+- **No webhooks:** Payment status updates are captured and confirmed synchronously upon buyer approval via the PayPal Orders v2 capture endpoint.
+- **Sandbox only:** PayPal transactions run in sandbox mode for demo and testing.
+- **Booking date release:** A pending booking older than 30 minutes stops blocking dates for other users.
+
+## Deploy on Render
+
+Deploy RentMate as a single Web Service on Render that serves both the API and the built client:
+
+- **Build Command:**
+  ```bash
+  npm install --prefix client && npm run build --prefix client && npm install --prefix server
+  ```
+- **Start Command:**
+  ```bash
+  npm start --prefix server
+  ```
+
+### Environment variables (Names only)
+Configure the following environment variables in the Render dashboard:
+- `MONGO_URI`
+- `JWT_SECRET`
+- `NODE_ENV`
+- `PAYPAL_CLIENT_ID`
+- `PAYPAL_CLIENT_SECRET`
+- `PAYPAL_API`
+- `PAYPAL_CURRENCY`
+- `INR_PER_USD`
+- `AI_API_KEY`
+- `AI_BASE_URL`
+- `AI_MODEL`
+
+> **Note:** Free Render services spin down after 15 minutes of inactivity, so the initial request after sleep may take 30 to 60 seconds.
