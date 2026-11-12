@@ -87,7 +87,7 @@ Deploy RentMate as a single Web Service on Render that serves both the API and t
 
 - **Build Command:**
   ```bash
-  npm install --prefix client && npm run build --prefix client && npm install --prefix server
+  npm install --include=dev --prefix client && npm run build --prefix client && npm install --prefix server
   ```
 - **Start Command:**
   ```bash
