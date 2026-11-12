@@ -259,46 +259,27 @@ function Rentals() {
                         marginBottom: "var(--s-2)",
                       }}
                     >
-                      {booking.paypalInvoiceUrl ? (
-                        <a
-                          href={booking.paypalInvoiceUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="btn btn-secondary btn-sm"
-                          style={{
-                            display: "inline-flex",
-                            alignItems: "center",
-                            gap: "5px",
-                            fontSize: "0.75rem",
-                            padding: "4px 10px",
-                          }}
-                        >
-                          <Download size={14} aria-hidden="true" />
-                          <span>Download Invoice</span>
-                          <ExternalLink size={12} aria-hidden="true" />
-                        </a>
-                      ) : (
-                        <button
-                          type="button"
-                          className="btn btn-secondary btn-sm"
-                          disabled={generatingInvoice[booking._id]}
-                          onClick={() => handleGenerateInvoice(booking._id)}
-                          style={{
-                            display: "inline-flex",
-                            alignItems: "center",
-                            gap: "5px",
-                            fontSize: "0.75rem",
-                            padding: "4px 10px",
-                          }}
-                        >
-                          <Download size={14} aria-hidden="true" />
-                          <span>
-                            {generatingInvoice[booking._id]
-                              ? "Generating Receipt..."
-                              : "Download Invoice"}
-                          </span>
-                        </button>
-                      )}
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-sm"
+                        disabled={generatingInvoice[booking._id]}
+                        onClick={() => handleGenerateInvoice(booking._id)}
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "5px",
+                          fontSize: "0.75rem",
+                          padding: "4px 10px",
+                        }}
+                      >
+                        <Download size={14} aria-hidden="true" />
+                        <span>
+                          {generatingInvoice[booking._id]
+                            ? "Opening Invoice..."
+                            : "Download Invoice"}
+                        </span>
+                        <ExternalLink size={12} aria-hidden="true" />
+                      </button>
                       <button
                         type="button"
                         className="btn btn-outline btn-sm"

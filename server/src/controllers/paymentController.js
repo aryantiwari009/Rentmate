@@ -155,6 +155,7 @@ export async function capture(req, res) {
         paymentDate: booking.paidAt,
         note: `Paid via PayPal Checkout (Capture ID: ${captureObj?.id || "captured"})`,
         method: "PAYPAL",
+        paymentId: captureObj?.id,
       });
       booking.paypalInvoiceStatus = "PAID";
       await Invoice.updateOne(
@@ -224,8 +225,9 @@ export async function createInvoiceEndpoint(req, res) {
 
   // If already generated
   if (booking.paypalInvoiceId && booking.paypalInvoiceUrl) {
-    // If the booking is paid, make sure the invoice reflects PAID
-    if (isAlreadyPaid && booking.paypalInvoiceStatus !== "PAID") {
+    let freshInvoiceUrl = booking.paypalInvoiceUrl;
+    // If the booking is paid, make sure the invoice reflects PAID on PayPal and in DB
+    if (isAlreadyPaid) {
       try {
         await recordInvoicePayment(booking.paypalInvoiceId, {
           amount: usdAmount,
@@ -233,13 +235,25 @@ export async function createInvoiceEndpoint(req, res) {
           paymentDate: booking.paidAt || new Date(),
           note: `Paid via PayPal Checkout (Capture ID: ${booking.paypalCaptureId || "captured"})`,
           method: "PAYPAL",
+          paymentId: booking.paypalCaptureId,
         });
         booking.paypalInvoiceStatus = "PAID";
+
+        const detailedPaid = await paypalGetInvoice(booking.paypalInvoiceId);
+        if (detailedPaid) {
+          freshInvoiceUrl = resolvePayerUrl(detailedPaid, booking.paypalInvoiceId);
+          booking.paypalInvoiceUrl = freshInvoiceUrl;
+        }
+
         await booking.save();
         await Invoice.updateOne(
           { invoiceId: booking.paypalInvoiceId },
           {
-            $set: { status: "PAID", paidAt: booking.paidAt || new Date() },
+            $set: {
+              status: "PAID",
+              paidAt: booking.paidAt || new Date(),
+              invoiceUrl: freshInvoiceUrl,
+            },
             $push: {
               eventHistory: {
                 eventType: "PAYMENT.CAPTURE.COMPLETED",
@@ -256,7 +270,7 @@ export async function createInvoiceEndpoint(req, res) {
 
     return res.json({
       invoiceId: booking.paypalInvoiceId,
-      invoiceUrl: booking.paypalInvoiceUrl,
+      invoiceUrl: freshInvoiceUrl,
       status: booking.paypalInvoiceStatus || (isAlreadyPaid ? "PAID" : "SENT"),
       alreadyCreated: true,
       isPaidReceipt: isAlreadyPaid,
@@ -296,6 +310,7 @@ export async function createInvoiceEndpoint(req, res) {
           paymentDate: booking.paidAt || new Date(),
           note: `Paid via PayPal Checkout (Capture ID: ${booking.paypalCaptureId || "captured"})`,
           method: "PAYPAL",
+          paymentId: booking.paypalCaptureId,
         });
         finalStatus = "PAID";
 
@@ -414,10 +429,35 @@ export async function getInvoiceEndpoint(req, res) {
   }
 
   try {
-    const invoice = await paypalGetInvoice(booking.paypalInvoiceId);
+    let invoice = await paypalGetInvoice(booking.paypalInvoiceId);
     if (!invoice) {
       return res.status(404).json({ message: "Invoice not found on PayPal" });
     }
+
+    if (booking.paymentStatus === "paid" && invoice.status !== "PAID") {
+      try {
+        const inrPerUsd = Number(process.env.INR_PER_USD) || 85;
+        const usdAmount = Number((booking.total / inrPerUsd).toFixed(2));
+        await recordInvoicePayment(booking.paypalInvoiceId, {
+          amount: usdAmount,
+          currency: process.env.PAYPAL_CURRENCY || "USD",
+          paymentDate: booking.paidAt || new Date(),
+          note: `Paid via PayPal Checkout (Capture ID: ${booking.paypalCaptureId || "captured"})`,
+          method: "PAYPAL",
+          paymentId: booking.paypalCaptureId,
+        });
+        invoice = await paypalGetInvoice(booking.paypalInvoiceId);
+        booking.paypalInvoiceStatus = "PAID";
+        await booking.save();
+        await Invoice.updateOne(
+          { invoiceId: booking.paypalInvoiceId },
+          { $set: { status: "PAID", paidAt: booking.paidAt || new Date() } }
+        );
+      } catch (syncErr) {
+        console.warn(`Sync payment on getInvoice failed: ${syncErr.message}`);
+      }
+    }
+
     const invoiceUrl = resolvePayerUrl(invoice, booking.paypalInvoiceId);
     return res.json({ invoice, invoiceUrl });
   } catch (err) {

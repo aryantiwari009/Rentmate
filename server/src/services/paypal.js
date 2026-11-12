@@ -270,32 +270,107 @@ export async function getInvoice(invoiceId) {
   return response.json();
 }
 
-export async function recordInvoicePayment(invoiceId, { amount, currency, paymentDate, note, method }) {
+export async function recordInvoicePayment(
+  invoiceId,
+  { amount, currency, paymentDate, note, method, paymentId }
+) {
   const token = await getAccessToken();
   const { apiBase } = getCredentials();
 
-  const payload = {
-    method: method || "PAYPAL",
-    payment_date: (paymentDate ? new Date(paymentDate) : new Date()).toISOString().slice(0, 10),
+  const formattedDate = (paymentDate ? new Date(paymentDate) : new Date())
+    .toISOString()
+    .slice(0, 10);
+  const formattedAmount =
+    typeof amount === "number" ? amount.toFixed(2) : String(amount);
+  const curr = currency || process.env.PAYPAL_CURRENCY || "USD";
+
+  // Determine initial payment method and payload
+  const preferredMethod = paymentId ? "PAYPAL" : method || "OTHER";
+  const primaryPayload = {
+    method: preferredMethod,
+    payment_date: formattedDate,
     amount: {
-      currency_code: currency || process.env.PAYPAL_CURRENCY || "USD",
-      value: typeof amount === "number" ? amount.toFixed(2) : String(amount),
+      currency_code: curr,
+      value: formattedAmount,
     },
     note: note || "Payment received via PayPal Checkout",
+    ...(paymentId && preferredMethod === "PAYPAL" ? { payment_id: String(paymentId) } : {}),
   };
 
-  const response = await fetch(`${apiBase}/v2/invoicing/invoices/${encodeURIComponent(invoiceId)}/payments`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(payload),
-  });
+  let response = await fetch(
+    `${apiBase}/v2/invoicing/invoices/${encodeURIComponent(invoiceId)}/payments`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(primaryPayload),
+    }
+  );
+
+  let errData = null;
+  if (!response.ok) {
+    errData = await response.json().catch(() => null);
+
+    // If invoice is already paid in PayPal, treat as success
+    const rawErr = JSON.stringify(errData || {}).toLowerCase();
+    const isAlreadyPaid =
+      response.status === 422 &&
+      (errData?.name === "INVOICE_ALREADY_PAID" ||
+        rawErr.includes("already paid") ||
+        rawErr.includes("marked as paid"));
+    if (isAlreadyPaid) {
+      return { recorded: true, alreadyPaid: true };
+    }
+
+    // If preferredMethod PAYPAL failed (e.g. PayPal requires specific transaction id format),
+    // fall back to method "OTHER" with capture reference in note
+    if (preferredMethod === "PAYPAL") {
+      const fallbackPayload = {
+        method: "OTHER",
+        payment_date: formattedDate,
+        amount: {
+          currency_code: curr,
+          value: formattedAmount,
+        },
+        note:
+          note ||
+          `Payment received via PayPal Checkout (Capture: ${paymentId || "recorded"})`,
+      };
+
+      response = await fetch(
+        `${apiBase}/v2/invoicing/invoices/${encodeURIComponent(invoiceId)}/payments`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(fallbackPayload),
+        }
+      );
+
+      if (!response.ok) {
+        errData = await response.json().catch(() => null);
+        const fallbackErr = JSON.stringify(errData || {}).toLowerCase();
+        const fallbackAlreadyPaid =
+          response.status === 422 &&
+          (errData?.name === "INVOICE_ALREADY_PAID" ||
+            fallbackErr.includes("already paid") ||
+            fallbackErr.includes("marked as paid"));
+        if (fallbackAlreadyPaid) {
+          return { recorded: true, alreadyPaid: true };
+        }
+      }
+    }
+  }
 
   if (!response.ok) {
-    const errData = await response.json().catch(() => null);
-    console.error(`PayPal recordInvoicePayment error: HTTP ${response.status}`, errData);
+    console.error(
+      `PayPal recordInvoicePayment error: HTTP ${response.status}`,
+      errData
+    );
     throw new Error(errData?.message || "Failed to record payment on PayPal invoice");
   }
 

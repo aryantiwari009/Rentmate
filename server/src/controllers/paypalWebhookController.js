@@ -333,6 +333,7 @@ export async function handlePayPalWebhook(req, res) {
                   paymentDate: booking.paidAt,
                   note: `Paid via PayPal Checkout (Capture ID: ${captureId})`,
                   method: "PAYPAL",
+                  paymentId: captureId,
                 });
                 booking.paypalInvoiceStatus = "PAID";
                 await Invoice.updateOne(
