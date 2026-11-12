@@ -7,6 +7,8 @@
     "dev": "node --watch src/server.js",
     "start": "node src/server.js",
     "seed": "node src/seed/seedProducts.js",
+    "test": "node test_security_isolation.js",
+    "test:security": "node test_security_isolation.js",
     "test:mcp": "node test_mcp.js"
   },
   "engines": {

@@ -16,13 +16,21 @@ import {
   callPayPalMcpTool,
   mcpToolToOpenAiFunction,
 } from "./paypalMcpService.js";
+import {
+  executeAuthorizedMcpTool,
+  verifyInvoiceAccess,
+  verifyBookingAccess,
+  verifyOrderAccess,
+  CUSTOMER_ALLOWED_MCP_TOOLS,
+} from "./mcpAuthorizationService.js";
 
 const SYSTEM_PROMPT =
   "You are RentMate's official PayPal AI rental assistant, equipped with the official PayPal MCP Server. " +
-  "You help users search items to rent by the month, check pricing and availability, prepare bookings, and manage real PayPal invoices, payments, and orders. " +
+  "You help users search items to rent by the month, check pricing and availability, prepare bookings, and manage real PayPal invoices, payments, and orders for their own account. " +
+  "Privacy and authorization: Users are only permitted to view, inspect, or manage invoices, bookings, and payments belonging to their own account. Never request, inspect, or disclose other users' private invoice data. " +
   "Use search_products to find real items in the catalog. " +
   "When the user has chosen an item, a start date and months, call propose_booking to check real price and prepare a proposal card. " +
-  "You can use official PayPal MCP tools (such as mcp_list_invoices, mcp_get_invoice, mcp_create_invoice, mcp_create_order, mcp_get_order) to inspect or manage PayPal transactions. " +
+  "You can use official PayPal MCP tools (such as mcp_list_invoices, mcp_get_invoice, mcp_create_invoice, mcp_create_order, mcp_get_order) to inspect or manage the user's PayPal transactions. " +
   "Always confirm pricing and booking details with the user before initiating any new invoice or order creation. " +
   "Prices are in Indian Rupees (INR) for rental displays and converted to USD for PayPal sandbox transactions. " +
   "Currency formatting: Always format USD amounts using $ (e.g. $25.86 USD). Always format INR amounts using ₹ (e.g. ₹2,198 INR). Never prefix USD amounts with ₹ (never write '₹ ... USD'). " +
@@ -271,7 +279,7 @@ async function runPayPalCreateInvoice(rawArguments, context) {
   }
 }
 
-async function runPayPalGetInvoice(rawArguments) {
+async function runPayPalGetInvoice(rawArguments, context) {
   let args = {};
   try {
     args = JSON.parse(rawArguments);
@@ -279,16 +287,32 @@ async function runPayPalGetInvoice(rawArguments) {
     return { ok: false, reason: "Could not read tool arguments" };
   }
 
-  const invoice = await paypalGetInvoice(args.invoiceId);
+  const invoiceId = args.invoiceId || args.invoice_id;
+  if (!invoiceId) return { ok: false, reason: "Invoice ID required" };
+
+  const userId = context?.user?._id ? String(context.user._id) : null;
+  const isAdmin = context?.user?.role === "admin";
+  const hasAccess = await verifyInvoiceAccess(invoiceId, userId, isAdmin);
+  if (!hasAccess) {
+    return { ok: false, error: "Unauthorized: You do not have permission to access this invoice." };
+  }
+
+  const invoice = await paypalGetInvoice(invoiceId);
   if (!invoice) return { ok: false, reason: "Invoice not found on PayPal" };
+
+  const curr = invoice.amount?.currency_code || "USD";
+  const symbol = curr === "USD" ? "$" : curr === "INR" ? "₹" : "";
+  const val = invoice.amount?.value || 0;
 
   return {
     ok: true,
     invoiceId: invoice.id,
     status: invoice.status,
-    amount: invoice.amount?.value,
-    currency: invoice.amount?.currency_code,
+    amount: val,
+    currency: curr,
+    formattedAmount: `${symbol}${val} ${curr}`.trim(),
     invoiceUrl: invoice.detail?.metadata?.recipient_view_url || invoice.detail?.metadata?.payer_view_url,
+    recipient: context?.user?.email,
   };
 }
 
@@ -346,7 +370,7 @@ async function runPayPalCreateOrder(rawArguments, context) {
   }
 }
 
-async function runPayPalGetOrderStatus(rawArguments) {
+async function runPayPalGetOrderStatus(rawArguments, context) {
   let args = {};
   try {
     args = JSON.parse(rawArguments);
@@ -354,13 +378,30 @@ async function runPayPalGetOrderStatus(rawArguments) {
     return { ok: false, reason: "Could not read tool arguments" };
   }
 
-  const order = await paypalGetOrder(args.orderId);
+  const orderId = args.orderId || args.order_id;
+  if (!orderId) return { ok: false, reason: "Order ID required" };
+
+  const userId = context?.user?._id ? String(context.user._id) : null;
+  const isAdmin = context?.user?.role === "admin";
+  const hasAccess = await verifyOrderAccess(orderId, userId, isAdmin);
+  if (!hasAccess) {
+    return { ok: false, error: "Unauthorized: You do not have permission to access this order." };
+  }
+
+  const order = await paypalGetOrder(orderId);
   if (!order) return { ok: false, reason: "Order not found" };
+
+  const curr = order.purchase_units?.[0]?.amount?.currency_code || "USD";
+  const symbol = curr === "USD" ? "$" : curr === "INR" ? "₹" : "";
+  const val = order.purchase_units?.[0]?.amount?.value || 0;
 
   return {
     ok: true,
     orderId: order.id,
     status: order.status,
+    amount: val,
+    currency: curr,
+    formattedAmount: `${symbol}${val} ${curr}`.trim(),
   };
 }
 
@@ -433,16 +474,15 @@ export async function runAssistant(userMessages, context = {}) {
   try {
     const rawMcpTools = await listPayPalMcpTools();
     if (rawMcpTools && rawMcpTools.length > 0) {
-      // Focus on essential commerce, invoice, and payment tools to stay well within Groq TPM limits
-      const allowedToolNames = new Set([
-        "get_invoice",
-        "list_invoices",
-        "send_invoice",
-        "get_order",
-        "create_order",
-        "create_refund",
-        "get_refund",
-      ]);
+      const isAdmin = context?.user?.role === "admin";
+      const allowedToolNames = isAdmin
+        ? new Set([
+            ...CUSTOMER_ALLOWED_MCP_TOOLS,
+            "list_transactions",
+            "list_disputes",
+            "get_dispute",
+          ])
+        : CUSTOMER_ALLOWED_MCP_TOOLS;
 
       mcpTools = rawMcpTools.filter((t) => allowedToolNames.has(t.name));
       const mcpFunctions = mcpTools.map(mcpToolToOpenAiFunction);
@@ -478,9 +518,8 @@ export async function runAssistant(userMessages, context = {}) {
         }
 
         try {
-          console.log(`[Assistant] Invoking official PayPal MCP tool: ${rawMcpName}`, parsedArgs);
-          const rawResult = await callPayPalMcpTool(rawMcpName, parsedArgs);
-          result = formatMcpResult(rawMcpName, rawResult);
+          console.log(`[Assistant] Invoking authorized PayPal MCP tool: ${rawMcpName} for user: ${context?.user?._id || "anonymous"}`);
+          result = await executeAuthorizedMcpTool(rawMcpName, parsedArgs, context);
         } catch (mcpCallErr) {
           console.error(`[Assistant] PayPal MCP tool execution error for ${rawMcpName}:`, mcpCallErr.message);
           result = { error: `PayPal MCP tool error: ${mcpCallErr.message}` };
@@ -496,11 +535,11 @@ export async function runAssistant(userMessages, context = {}) {
       else if (fnName === "paypal_create_invoice") {
         result = await runPayPalCreateInvoice(call.function.arguments, context);
       } else if (fnName === "paypal_get_invoice") {
-        result = await runPayPalGetInvoice(call.function.arguments);
+        result = await runPayPalGetInvoice(call.function.arguments, context);
       } else if (fnName === "paypal_create_order") {
         result = await runPayPalCreateOrder(call.function.arguments, context);
       } else if (fnName === "paypal_get_order_status") {
-        result = await runPayPalGetOrderStatus(call.function.arguments);
+        result = await runPayPalGetOrderStatus(call.function.arguments, context);
       }
       // 4. Raw MCP tool name without mcp_ prefix
       else {
@@ -508,9 +547,7 @@ export async function runAssistant(userMessages, context = {}) {
         if (isRawMcp) {
           try {
             const parsedArgs = JSON.parse(call.function.arguments || "{}");
-            console.log(`[Assistant] Invoking raw PayPal MCP tool: ${fnName}`, parsedArgs);
-            const rawResult = await callPayPalMcpTool(fnName, parsedArgs);
-            result = formatMcpResult(fnName, rawResult);
+            result = await executeAuthorizedMcpTool(fnName, parsedArgs, context);
           } catch (rawErr) {
             result = { error: `PayPal MCP tool error: ${rawErr.message}` };
           }
