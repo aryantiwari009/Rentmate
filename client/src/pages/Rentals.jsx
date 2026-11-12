@@ -1,46 +1,104 @@
-import React, { useState } from "react";
-import { Link } from "react-router-dom";
+import React, { useCallback, useEffect, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import {
   MapPin,
   ArrowRight,
   Package,
   CalendarClock,
-  RotateCcw,
+  X,
+  AlertTriangle,
+  CheckCircle2,
 } from "lucide-react";
-import {
-  getLocalBookings,
-  saveLocalBookings,
-} from "../utils/storage.js";
+import { api } from "../utils/api.js";
+import { useAuth } from "../context/AuthContext.jsx";
 import ProductImage from "../components/ProductImage.jsx";
+import PayButton from "../components/PayButton.jsx";
 
 function Rentals() {
-  const [bookings, setBookings] = useState(getLocalBookings());
-  function updateBooking(id, patch) {
-    const updated = bookings.map((b) =>
-      String(b._id) === String(id) ? { ...b, ...patch } : b,
+  const navigate = useNavigate();
+  const { user, loading: authLoading } = useAuth();
+  const [bookings, setBookings] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [cancelTarget, setCancelTarget] = useState(null);
+  const [cancelling, setCancelling] = useState(false);
+  const [cancelError, setCancelError] = useState(null);
+
+  useEffect(() => {
+    if (!authLoading && !user) {
+      navigate("/login", { replace: true, state: { from: "/rentals" } });
+    }
+  }, [user, authLoading, navigate]);
+
+  const loadBookings = useCallback(async () => {
+    if (!user) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await api.get("/bookings");
+      setBookings(Array.isArray(data) ? data : []);
+    } catch (err) {
+      setError(err.message || "Failed to load rentals");
+      setBookings([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    if (user) {
+      loadBookings();
+    }
+  }, [user, loadBookings]);
+
+  function promptCancel(booking) {
+    setCancelTarget(booking);
+    setCancelError(null);
+  }
+
+  async function confirmCancel() {
+    if (!cancelTarget || cancelling) return;
+    setCancelling(true);
+    setCancelError(null);
+    try {
+      await api.patch(`/bookings/${cancelTarget._id}/cancel`);
+      setCancelTarget(null);
+      await loadBookings();
+    } catch (err) {
+      setCancelError(err.message || "Failed to cancel booking");
+    } finally {
+      setCancelling(false);
+    }
+  }
+
+  const money = (n) => `₹${Number(n || 0).toLocaleString("en-IN")}`;
+
+  if (authLoading || (loading && !bookings.length && !error)) {
+    return (
+      <div className="page-loading" role="status">
+        <div className="loader" />
+        <p>Loading your rentals...</p>
+      </div>
     );
-    setBookings(updated);
-    saveLocalBookings(updated);
   }
-  function extend(id) {
-    const booking = bookings.find((b) => String(b._id) === String(id));
-    if (!booking) return;
-    const months = Number(booking.months || 1) + 1;
-    updateBooking(id, {
-      months,
-      total:
-        Number(booking.monthlyRent || 0) * months +
-        Number(booking.deposit || 0),
-      status: "Active",
-    });
+
+  if (error) {
+    return (
+      <section className="page rentals-page">
+        <div className="container">
+          <div className="empty-page">
+            <h2>Failed to load rentals</h2>
+            <p>{error}</p>
+            <button type="button" className="btn btn-primary" onClick={loadBookings}>
+              Retry
+            </button>
+          </div>
+        </div>
+      </section>
+    );
   }
-  function returnRental(id) {
-    updateBooking(id, {
-      status: "Returned",
-      returnedAt: new Date().toISOString(),
-    });
-  }
-  if (!bookings.length)
+
+  if (!bookings.length) {
     return (
       <section className="page rentals-page">
         <div className="container">
@@ -57,16 +115,18 @@ function Rentals() {
         </div>
       </section>
     );
-  const active = bookings.filter((b) => b.status !== "Returned");
-  const returned = bookings.filter((b) => b.status === "Returned");
-  const money = (n) => `₹${Number(n || 0).toLocaleString("en-IN")}`;
+  }
+
+  const active = bookings.filter((b) => b.status === "active");
+  const past = bookings.filter((b) => b.status !== "active");
+
   return (
     <section className="page rentals-page">
       <div className="container">
         <header className="page-header page-header-row">
           <div>
             <h1>My rentals</h1>
-            <p>Track active rentals, extend your term or return an item.</p>
+            <p>Track active rentals, dates and manage your bookings.</p>
           </div>
           <Link to="/explore" className="btn btn-primary">
             Rent something <ArrowRight size={18} aria-hidden="true" />
@@ -79,8 +139,8 @@ function Rentals() {
             <span>Active rentals</span>
           </div>
           <div>
-            <strong>{returned.length}</strong>
-            <span>Returned</span>
+            <strong>{past.length}</strong>
+            <span>Past / Cancelled</span>
           </div>
           <div>
             <strong>
@@ -92,29 +152,37 @@ function Rentals() {
 
         <div className="rentals-grid">
           {bookings.map((booking) => {
-            const isReturned = booking.status === "Returned";
+            const isInactive = booking.status !== "active";
+            const product = booking.product || {};
+            const productName = product.name || "Rental item";
+            const location = product.location || "Lucknow";
+
             return (
               <article
-                className={`rental-card ${isReturned ? "rental-returned" : ""}`}
+                className={`rental-card ${isInactive ? "rental-returned" : ""}`}
                 key={booking._id}
               >
                 <div className="rental-image">
-                  <ProductImage product={booking} alt="" compact loading="lazy" />
+                  <ProductImage product={product} alt="" compact loading="lazy" />
                 </div>
                 <div className="rental-content">
                   <div className="rental-top">
-                    <span className={`status-badge ${isReturned ? "returned" : ""}`}>
-                      {booking.status || "Active"}
-                    </span>
+                    <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                      <span className={`status-badge ${booking.status}`}>
+                        {booking.status}
+                      </span>
+                      <span className={`payment-badge ${booking.paymentStatus}`}>
+                        {booking.paymentStatus}
+                      </span>
+                    </div>
                     <span className="rental-location">
                       <MapPin size={14} aria-hidden="true" />
-                      {booking.location || "Local"}
+                      {location}
                     </span>
                   </div>
-                  <h2>{booking.productName}</h2>
-                  {booking.bundleName && (
-                    <span className="rental-bundle">Part of {booking.bundleName}</span>
-                  )}
+
+                  <h2>{productName}</h2>
+
                   <dl className="rental-details">
                     <div>
                       <dt>Monthly rent</dt>
@@ -129,24 +197,43 @@ function Rentals() {
                       <dd>{money(booking.total)}</dd>
                     </div>
                   </dl>
+
+                  {booking.status === "active" && booking.paymentStatus === "pending" && (
+                    <div style={{ marginTop: "var(--s-3)", marginBottom: "var(--s-2)" }}>
+                      <PayButton booking={booking} onSuccess={loadBookings} />
+                    </div>
+                  )}
+
                   <div className="rental-footer">
                     <span>
-                      <CalendarClock size={14} aria-hidden="true" /> Started{" "}
+                      <CalendarClock size={14} aria-hidden="true" />{" "}
                       {booking.startDate
-                        ? new Date(booking.startDate).toLocaleDateString("en-IN")
-                        : "recently"}
+                        ? `${new Date(booking.startDate).toLocaleDateString("en-IN")} - ${new Date(booking.endDate).toLocaleDateString("en-IN")}`
+                        : "Scheduled"}
                     </span>
-                    {!isReturned ? (
+
+                    {booking.status === "active" ? (
                       <div className="rental-actions">
-                        <button type="button" onClick={() => extend(booking._id)}>
-                          <CalendarClock size={14} aria-hidden="true" /> Extend 1 month
-                        </button>
-                        <button type="button" onClick={() => returnRental(booking._id)}>
-                          <RotateCcw size={14} aria-hidden="true" /> Return
+                        <button
+                          type="button"
+                          onClick={() => promptCancel(booking)}
+                          disabled={cancelling && cancelTarget?._id === booking._id}
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: "4px",
+                            cursor: "pointer",
+                            color: "var(--danger, #dc2626)",
+                          }}
+                        >
+                          <X size={14} aria-hidden="true" />
+                          Cancel booking
                         </button>
                       </div>
                     ) : (
-                      <span className="returned-date">Returned</span>
+                      <span className="returned-date" style={{ textTransform: "capitalize" }}>
+                        {booking.status}
+                      </span>
                     )}
                   </div>
                 </div>
@@ -155,7 +242,95 @@ function Rentals() {
           })}
         </div>
       </div>
+
+      {cancelTarget && (
+        <div
+          className="confirm-modal-backdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="cancel-modal-title"
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !cancelling) {
+              setCancelTarget(null);
+              setCancelError(null);
+            }
+          }}
+        >
+          <div className="confirm-modal-dialog">
+            <div className="confirm-modal-header">
+              <div className="confirm-modal-icon" aria-hidden="true">
+                <AlertTriangle size={24} />
+              </div>
+              <h2 id="cancel-modal-title" className="confirm-modal-title">
+                Cancel booking?
+              </h2>
+            </div>
+
+            <p className="confirm-modal-body">
+              Are you sure you want to cancel your rental for{" "}
+              <strong>{cancelTarget.product?.name || "this item"}</strong>?
+              Your reserved dates will be freed for other users.
+            </p>
+
+            {cancelTarget.paymentStatus === "paid" ? (
+              <div className="confirm-modal-refund-notice">
+                <CheckCircle2 size={18} aria-hidden="true" style={{ flexShrink: 0 }} />
+                <span>
+                  A full automatic refund of <strong>{money(cancelTarget.total)}</strong> will be credited directly to your original payment method.
+                </span>
+              </div>
+            ) : null}
+
+            {cancelError && (
+              <div
+                className="form-error"
+                style={{
+                  padding: "var(--s-3)",
+                  borderRadius: "var(--r-2)",
+                  background: "var(--danger-tint)",
+                  color: "var(--danger)",
+                  fontSize: "0.875rem",
+                }}
+              >
+                {cancelError}
+              </div>
+            )}
+
+            <div className="confirm-modal-actions">
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={() => {
+                  setCancelTarget(null);
+                  setCancelError(null);
+                }}
+                disabled={cancelling}
+              >
+                Keep booking
+              </button>
+              <button
+                type="button"
+                className="btn btn-sm"
+                style={{
+                  background: "var(--danger)",
+                  color: "#ffffff",
+                  borderColor: "var(--danger)",
+                }}
+                onClick={confirmCancel}
+                disabled={cancelling}
+              >
+                {cancelling
+                  ? "Cancelling..."
+                  : cancelTarget.paymentStatus === "paid"
+                  ? "Cancel & Refund"
+                  : "Confirm cancellation"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 }
+
 export default Rentals;

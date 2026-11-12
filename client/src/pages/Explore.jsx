@@ -1,10 +1,9 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { Search, X } from "lucide-react";
-import { getLocalListings } from "../utils/storage.js";
-import fallbackProducts from "../data/fallbackProducts.js";
-import { API } from "../utils/config.js";
+import { api } from "../utils/api.js";
 import ProductGrid, { ProductGridSkeleton } from "../components/ProductGrid.jsx";
+import CustomSelect from "../components/CustomSelect.jsx";
 
 const CATEGORIES = ["Furniture", "Electronics", "Home Essentials", "Work & Study"];
 
@@ -18,74 +17,70 @@ function Explore() {
 
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [query, setQuery] = useState(initialQuery);
+  const [debouncedQuery, setDebouncedQuery] = useState(initialQuery);
   const [category, setCategory] = useState(initialCategory);
   const [maxPrice, setMaxPrice] = useState("");
   const [sort, setSort] = useState("recommended");
 
   useEffect(() => {
     setQuery(initialQuery);
+    setDebouncedQuery(initialQuery);
     setCategory(initialCategory);
   }, [initialQuery, initialCategory]);
 
   useEffect(() => {
-    async function loadProducts() {
-      try {
-        const response = await fetch(`${API}/products`);
+    const handler = setTimeout(() => {
+      setDebouncedQuery(query);
+    }, 300);
 
-        if (!response.ok) {
-          throw new Error();
-        }
+    return () => clearTimeout(handler);
+  }, [query]);
 
-        const data = await response.json();
-
-        if (Array.isArray(data) && data.length) {
-          setProducts([...data, ...getLocalListings()]);
-        } else {
-          setProducts([...fallbackProducts, ...getLocalListings()]);
-        }
-      } catch {
-        setProducts([...fallbackProducts, ...getLocalListings()]);
-      } finally {
-        setLoading(false);
+  const loadProducts = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const searchParams = new URLSearchParams();
+      if (debouncedQuery.trim()) {
+        searchParams.set("q", debouncedQuery.trim());
       }
+      if (category.trim()) {
+        searchParams.set("category", category.trim());
+      }
+      if (maxPrice !== "" && !Number.isNaN(Number(maxPrice))) {
+        searchParams.set("maxPrice", maxPrice.trim());
+      }
+
+      const queryString = searchParams.toString();
+      const path = queryString ? `/products?${queryString}` : "/products";
+      const data = await api.get(path);
+      setProducts(Array.isArray(data) ? data : []);
+    } catch (err) {
+      setError(err.message || "Failed to load rentals");
+      setProducts([]);
+    } finally {
+      setLoading(false);
     }
+  }, [debouncedQuery, category, maxPrice]);
 
+  useEffect(() => {
     loadProducts();
-  }, []);
+  }, [loadProducts]);
 
-  const filteredProducts = useMemo(() => {
-    const list = products.filter((product) => {
-      const search = query.toLowerCase().trim();
-
-      const searchableText = `
-        ${product.name || ""}
-        ${product.category || ""}
-        ${product.location || ""}
-        ${product.description || ""}
-      `.toLowerCase();
-
-      const matchesSearch = !search || searchableText.includes(search);
-
-      const matchesCategory =
-        !category ||
-        product.category?.toLowerCase() === category.toLowerCase();
-
-      const matchesPrice =
-        !maxPrice || Number(product.price) <= Number(maxPrice);
-
-      return matchesSearch && matchesCategory && matchesPrice;
-    });
-
-    if (sort === "price-asc") return [...list].sort((a, b) => a.price - b.price);
-    if (sort === "price-desc") return [...list].sort((a, b) => b.price - a.price);
+  const sortedProducts = useMemo(() => {
+    if (!products.length) return [];
+    if (sort === "price-asc") return [...products].sort((a, b) => a.price - b.price);
+    if (sort === "price-desc") return [...products].sort((a, b) => b.price - a.price);
     if (sort === "rating")
-      return [...list].sort((a, b) => Number(b.rating || 0) - Number(a.rating || 0));
-    return list;
-  }, [products, query, category, maxPrice, sort]);
+      return [...products].sort((a, b) => Number(b.rating || 0) - Number(a.rating || 0));
+    return products;
+  }, [products, sort]);
 
   const clearFilters = () => {
     setQuery("");
+    setDebouncedQuery("");
     setCategory("");
     setMaxPrice("");
   };
@@ -129,15 +124,20 @@ function Explore() {
               </span>
             </label>
 
-            <label className="field-inline">
+            <div className="field-inline">
               <span>Sort by</span>
-              <select value={sort} onChange={(e) => setSort(e.target.value)}>
-                <option value="recommended">Recommended</option>
-                <option value="price-asc">Price: low to high</option>
-                <option value="price-desc">Price: high to low</option>
-                <option value="rating">Top rated</option>
-              </select>
-            </label>
+              <CustomSelect
+                value={sort}
+                onChange={setSort}
+                ariaLabel="Sort rentals by"
+                options={[
+                  { value: "recommended", label: "Recommended" },
+                  { value: "price-asc", label: "Price: low to high" },
+                  { value: "price-desc", label: "Price: high to low" },
+                  { value: "rating", label: "Top rated" },
+                ]}
+              />
+            </div>
           </div>
         </div>
 
@@ -167,10 +167,12 @@ function Explore() {
           <p>
             {loading ? (
               "Loading rentals..."
+            ) : error ? (
+              "Error loading rentals"
             ) : (
               <>
-                <strong>{filteredProducts.length}</strong>{" "}
-                {filteredProducts.length === 1 ? "rental" : "rentals"} found
+                <strong>{sortedProducts.length}</strong>{" "}
+                {sortedProducts.length === 1 ? "rental" : "rentals"} found
               </>
             )}
           </p>
@@ -182,10 +184,22 @@ function Explore() {
           )}
         </div>
 
-        {loading ? (
+        {error ? (
+          <div className="empty-state">
+            <h3>Failed to load rentals</h3>
+            <p>{error}</p>
+            <button type="button" className="btn btn-primary" onClick={loadProducts}>
+              Retry
+            </button>
+          </div>
+        ) : loading ? (
           <ProductGridSkeleton count={8} />
         ) : (
-          <ProductGrid products={filteredProducts} onClear={hasFilters ? clearFilters : undefined} />
+          <ProductGrid
+            products={sortedProducts}
+            onClear={hasFilters ? clearFilters : undefined}
+            emptyMessage="No items match your search"
+          />
         )}
       </div>
     </section>

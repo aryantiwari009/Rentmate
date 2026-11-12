@@ -6,6 +6,7 @@ import cookieParser from "cookie-parser";
 import "dotenv/config";
 import bookingRoutes from './routes/bookingRoutes.js'
 import assistantRoutes from "./routes/assistantRoutes.js";
+import paymentRoutes from "./routes/paymentRoutes.js";
 
 const app = express();
 
@@ -35,9 +36,27 @@ async function start() {
 app.use('/api/products', productRoutes);
 // everything in authRoutes lives under /api/auth
 app.use("/api/auth", authRoutes);
-// everything in authRoutes lives under /api/booking
+// everything in bookingRoutes lives under /api/bookings
 app.use("/api/bookings", bookingRoutes);
-// everything in authRoutes lives under /api/assistant
+// everything in assistantRoutes lives under /api/assistant
 app.use("/api/assistant", assistantRoutes);
+// payment routes live under /api/payments
+app.use("/api/payments", paymentRoutes);
+
+// Catch-all 404 for API routes
+app.use("/api", (req, res) => {
+  res.status(404).json({ message: "API endpoint not found" });
+});
+
+// Global error handler to prevent HTML stack leaks in production
+app.use((err, req, res, next) => {
+  console.error("Server error:", err.message);
+  res.status(err.status || 500).json({
+    message: process.env.NODE_ENV === "production" ? "Internal server error" : (err.message || "Internal server error"),
+  });
+});
+
+export { app };
+export default app;
 
 start();
