@@ -29,8 +29,8 @@ export function buildProductFilter(query = {}) {
       const safe = escapeRegex(word);
       return {
         $or: [
-          { name: { $regex: safe, $options: "i" } },
-          { description: { $regex: safe, $options: "i" } },
+          { name: { $regex: `\\b${safe}`, $options: "i" } },
+          { description: { $regex: `\\b${safe}`, $options: "i" } },
         ],
       };
     });
