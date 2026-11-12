@@ -204,6 +204,9 @@ export async function capture(req, res) {
 }
 
 function resolvePayerUrl(invoiceData, invoiceId) {
+  if (invoiceData?.detail?.metadata?.recipient_view_url) {
+    return invoiceData.detail.metadata.recipient_view_url;
+  }
   if (invoiceData?.detail?.metadata?.payer_view_url) {
     return invoiceData.detail.metadata.payer_view_url;
   }

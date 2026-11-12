@@ -25,6 +25,7 @@ const SYSTEM_PROMPT =
   "You can use official PayPal MCP tools (such as mcp_list_invoices, mcp_get_invoice, mcp_create_invoice, mcp_create_order, mcp_get_order) to inspect or manage PayPal transactions. " +
   "Always confirm pricing and booking details with the user before initiating any new invoice or order creation. " +
   "Prices are in Indian Rupees (INR) for rental displays and converted to USD for PayPal sandbox transactions. " +
+  "Currency formatting: Always format USD amounts using $ (e.g. $25.86 USD). Always format INR amounts using ₹ (e.g. ₹2,198 INR). Never prefix USD amounts with ₹ (never write '₹ ... USD'). " +
   "Answer in concise, natural, helpful text without raw markdown symbols or fake buttons.";
 
 const tools = [
@@ -234,12 +235,12 @@ async function runPayPalCreateInvoice(rawArguments, context) {
     });
 
     const invoiceId = created.id;
-    let invoiceUrl = created?.detail?.metadata?.payer_view_url;
+    let invoiceUrl = created?.detail?.metadata?.recipient_view_url || created?.detail?.metadata?.payer_view_url;
     try {
       await paypalSendInvoice(invoiceId);
       const detailed = await paypalGetInvoice(invoiceId);
-      if (detailed?.detail?.metadata?.payer_view_url) {
-        invoiceUrl = detailed.detail.metadata.payer_view_url;
+      if (detailed?.detail?.metadata?.recipient_view_url || detailed?.detail?.metadata?.payer_view_url) {
+        invoiceUrl = detailed.detail.metadata.recipient_view_url || detailed.detail.metadata.payer_view_url;
       }
     } catch (_) {}
 
@@ -287,7 +288,7 @@ async function runPayPalGetInvoice(rawArguments) {
     status: invoice.status,
     amount: invoice.amount?.value,
     currency: invoice.amount?.currency_code,
-    invoiceUrl: invoice.detail?.metadata?.payer_view_url,
+    invoiceUrl: invoice.detail?.metadata?.recipient_view_url || invoice.detail?.metadata?.payer_view_url,
   };
 }
 
@@ -371,20 +372,25 @@ function formatMcpResult(toolName, result) {
   if (toolName === "list_invoices" && Array.isArray(result.items)) {
     return {
       total: result.total_count || result.items.length,
-      invoices: result.items.slice(0, 5).map((inv) => ({
-        id: inv.id,
-        invoiceNumber: inv.detail?.invoice_number,
-        status: inv.status,
-        amount: inv.amount?.value,
-        dueAmount: inv.due_amount?.value,
-        currency: inv.amount?.currency_code,
-        recipient: inv.primary_recipients?.[0]?.billing_info?.email_address,
-      })),
+      invoices: result.items.slice(0, 5).map((inv) => {
+        const symbol = inv.amount?.currency_code === "USD" ? "$" : inv.amount?.currency_code === "INR" ? "₹" : "";
+        return {
+          id: inv.id,
+          invoiceNumber: inv.detail?.invoice_number,
+          status: inv.status,
+          amount: inv.amount?.value,
+          dueAmount: inv.due_amount?.value,
+          currency: inv.amount?.currency_code,
+          formattedAmount: `${symbol}${inv.amount?.value || 0} ${inv.amount?.currency_code || ""}`.trim(),
+          recipient: inv.primary_recipients?.[0]?.billing_info?.email_address,
+        };
+      }),
     };
   }
 
   // Format get_invoice cleanly
   if (toolName === "get_invoice" && result.id) {
+    const symbol = result.amount?.currency_code === "USD" ? "$" : result.amount?.currency_code === "INR" ? "₹" : "";
     return {
       id: result.id,
       invoiceNumber: result.detail?.invoice_number,
@@ -392,21 +398,24 @@ function formatMcpResult(toolName, result) {
       amount: result.amount?.value,
       dueAmount: result.due_amount?.value,
       currency: result.amount?.currency_code,
+      formattedAmount: `${symbol}${result.amount?.value || 0} ${result.amount?.currency_code || ""}`.trim(),
       note: result.detail?.note,
       invoiceDate: result.detail?.invoice_date,
-      viewUrl: result.detail?.metadata?.payer_view_url,
+      viewUrl: result.detail?.metadata?.recipient_view_url || result.detail?.metadata?.payer_view_url,
       recipient: result.primary_recipients?.[0]?.billing_info?.email_address,
     };
   }
 
   // Format get_order cleanly
   if (toolName === "get_order" && result.id) {
+    const symbol = result.purchase_units?.[0]?.amount?.currency_code === "USD" ? "$" : result.purchase_units?.[0]?.amount?.currency_code === "INR" ? "₹" : "";
     return {
       id: result.id,
       status: result.status,
       intent: result.intent,
       amount: result.purchase_units?.[0]?.amount?.value,
       currency: result.purchase_units?.[0]?.amount?.currency_code,
+      formattedAmount: `${symbol}${result.purchase_units?.[0]?.amount?.value || 0} ${result.purchase_units?.[0]?.amount?.currency_code || ""}`.trim(),
     };
   }
 

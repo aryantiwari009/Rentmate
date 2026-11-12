@@ -20,6 +20,9 @@ const STATUS_RANKS = {
 };
 
 function resolvePayerUrl(resource, invoiceId) {
+  if (resource?.detail?.metadata?.recipient_view_url) {
+    return resource.detail.metadata.recipient_view_url;
+  }
   if (resource?.detail?.metadata?.payer_view_url) {
     return resource.detail.metadata.payer_view_url;
   }
